@@ -1,0 +1,51 @@
+version: "3.9"
+
+# Development overrides: hot reload, exposed ports, faster iteration
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  wppconnect:
+    command: ["--config", "/config/config.json"]
+    volumes:
+      - ./wppconnect-config/config.dev.json:/config/config.json:ro
+      - wppconnect_tokens:/usr/src/wpp-server/tokens
+      - wppconnect_userdata:/usr/src/wpp-server/userDataDir
+
+  agent-langgraph:
+    volumes:
+      - ./services/agent-langgraph:/app
+      - /app/__pycache__
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+  backend-api:
+    build:
+      context: ./services/backend-api
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/backend-api:/app
+      - /app/node_modules
+      - /app/dist
+    command: sh -c "npx prisma generate && npm run dev"
+    environment:
+      NODE_ENV: development
+      WPPCONNECT_URL: http://wppconnect:21465
+      AGENT_URL: http://agent-langgraph:8000
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./services/frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    environment:
+      NODE_ENV: development
+      BACKEND_API_URL: http://backend-api:3001/api/v1
