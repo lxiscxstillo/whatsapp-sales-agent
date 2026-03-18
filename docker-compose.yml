@@ -1,0 +1,109 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ── WPPConnect Server ───────────────────────────────────────────────────────
+  wppconnect:
+    image: wppconnect/server-cli:latest
+    restart: unless-stopped
+    ports:
+      - "21465:21465"
+    command: ["--config", "/config/config.json"]
+    volumes:
+      - ./wppconnect-config/config.json:/config/config.json:ro
+      - wppconnect_tokens:/usr/src/wpp-server/tokens
+      - wppconnect_userdata:/usr/src/wpp-server/userDataDir
+    networks:
+      - internal
+      - external
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── LangGraph Agent (Python) ────────────────────────────────────────────────
+  agent-langgraph:
+    build:
+      context: ./services/agent-langgraph
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      LANGCHAIN_TRACING_V2: "true"
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Backend API (Node.js) ───────────────────────────────────────────────────
+  backend-api:
+    build:
+      context: ./services/backend-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      WPPCONNECT_URL: http://wppconnect:21465
+      WPPCONNECT_SECRET_KEY: ${WPPCONNECT_SECRET_KEY}
+      WPPCONNECT_SESSION: ${WPPCONNECT_SESSION}
+      AGENT_URL: http://agent-langgraph:8000
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      NODE_ENV: production
+    networks:
+      - internal
+      - external
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-langgraph:
+        condition: service_started
+
+  # ── Frontend Next.js ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_API_URL: http://backend-api:3001/api/v1
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    networks:
+      - external
+
+volumes:
+  postgres_data:
+  wppconnect_tokens:
+  wppconnect_userdata:
+
+networks:
+  internal:
+    driver: bridge
+  external:
+    driver: bridge

@@ -1,0 +1,21 @@
+export default {
+  secretKey: process.env.WPPCONNECT_SECRET_KEY || 'changeme',
+  host: 'http://localhost',
+  port: '21465',
+  deviceName: 'Asesor Inmobiliario',
+  poweredBy: 'WPPConnect-Server',
+  tokenStoreType: 'file',
+  customUserDataDir: './userDataDir/',
+  webhook: {
+    url: process.env.WEBHOOK_URL || 'http://backend-api:3001/api/v1/webhook/message',
+    readMessage: true,
+    listenAcks: false,
+    allUnreadOnStart: false,
+    ignore: ['status@broadcast'],
+    onPresenceChanged: false,
+    onParticipantsChanged: false,
+    onReactionMessage: false,
+    onPollResponse: false,
+    onRevokedMessage: false,
+  },
+};
