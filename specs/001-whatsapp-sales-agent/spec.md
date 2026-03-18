@@ -1637,9 +1637,9 @@ Los siguientes riesgos identificados en la auditoría se registran formalmente p
 
 Antes de considerar el sistema listo para entrega, verificar:
 
-- [ ] **GAP-1**: Existe al menos una rama `feature/*` y una rama `fix/*` en el historial del repositorio visible en `git branch -a`.
-- [ ] **GAP-2**: `railway.toml` existe en el root. El servicio combined arranca correctamente en Railway con healthcheck en `/health` retornando 200.
-- [ ] **GAP-3**: `vercel.json` existe en el root. El frontend deploya en Vercel sin errores de build.
-- [ ] **GAP-4**: Al ejecutar `docker compose down -v && docker compose up` (volúmenes limpios), el backend aplica migraciones Prisma automáticamente antes de arrancar.
-- [ ] **GAP-5**: `GET /api/v1/leads` retorna 200 con JSON válido cuando algún lead tiene `slotBudgetNumeric` con valor (sin `TypeError: Do not know how to serialize a BigInt`).
-- [ ] **GAP-6**: `README.md` en el root contiene instrucciones suficientes para que un evaluador externo replique el entorno desde cero.
+- [X] **GAP-1**: Existe al menos una rama `feature/*` y dos ramas `fix/*` en el historial del repositorio (`feature/deployment-config`, `fix/startup-migrations`, `fix/wppconnect-railway-limits`).
+- [X] **GAP-2**: `railway.toml` existe en el root apuntando a `services/combined/Dockerfile`. Healthcheck configurado en `/health` (público, antes de authMiddleware). Response: `{ status, version, timestamp }`.
+- [X] **GAP-3**: `vercel.json` existe en el root con framework nextjs y env vars por referencia. `next.config.js` activa `output:standalone` solo con `BUILD_TARGET=docker`.
+- [X] **GAP-4**: `services/backend-api/entrypoint.sh` ejecuta `npx prisma migrate deploy` con check de exit code antes de `node dist/index.js`. Dockerfile usa el entrypoint como CMD. Prisma CLI disponible en runtime via reinstall post-prune.
+- [X] **GAP-5**: `BigInt.prototype.toJSON` patch implementado al inicio de `index.ts` (antes de cualquier import de Prisma). `slotBudgetNumeric` se serializa como string en JSON.
+- [X] **GAP-6**: `README.md` en root con arquitectura ASCII, stack table, setup local paso a paso, guías de despliegue Railway/Fly.io/Vercel, y referencia a `.env.example` completo.

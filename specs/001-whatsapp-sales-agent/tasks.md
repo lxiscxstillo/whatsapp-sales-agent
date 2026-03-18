@@ -57,8 +57,8 @@
 - [X] T017 Inicializar Prisma en `services/backend-api/`: `npx prisma init`, configurar `datasource db` con `provider = "postgresql"` — `services/backend-api/prisma/schema.prisma`
 - [X] T018 Definir modelo `Lead` completo en `services/backend-api/prisma/schema.prisma`: todos los campos de slots como columnas planas, enum `LeadStatus` (NEW/QUALIFYING/HOT/HANDOFF/PAUSED/CLOSED), campo `ambiguityCount`, índices en `status`, `createdAt`, `isHandoffRequested`
 - [X] T019 Definir modelo `Message` en `services/backend-api/prisma/schema.prisma`: campos `wppMessageId` (@unique), `direction` (enum), `senderType` (enum), `langsmithRunId`, `isAmbiguous`, `rawPayload` (Json), índices en `(leadId, createdAt)` y `wppMessageId`
-- [ ] T020 Generar migración inicial: `npx prisma migrate dev --name init` — `services/backend-api/prisma/migrations/`
-- [ ] T021 Generar Prisma Client: `npx prisma generate` — verificar que `@prisma/client` está disponible en `services/backend-api/node_modules`
+- [X] T020 Generar migración inicial: `npx prisma migrate dev --name init` — `services/backend-api/prisma/migrations/`
+- [X] T021 Generar Prisma Client: `npx prisma generate` — verificar que `@prisma/client` está disponible en `services/backend-api/node_modules`
 
 ### Agent Python — Skeleton
 
@@ -151,7 +151,7 @@
 ### Next.js Setup & Route Handlers
 
 - [X] T050 [US3] Inicializar Next.js 14 App Router en `services/frontend/`: `create-next-app` con TypeScript, Tailwind CSS, App Router; configurar `next.config.js` con `output: "standalone"` — `services/frontend/package.json`
-- [ ] T051 [P] [US3] Instalar shadcn/ui en `services/frontend/`: `npx shadcn-ui@latest init`; agregar componentes: `table`, `badge`, `sheet`, `scroll-area`, `textarea`, `button`, `dialog` — `services/frontend/components/ui/`
+- [X] T051 [P] [US3] Instalar shadcn/ui en `services/frontend/`: `npx shadcn-ui@latest init`; agregar componentes: `table`, `badge`, `sheet`, `scroll-area`, `textarea`, `button`, `dialog` — `services/frontend/components/ui/`
 - [X] T052 [P] [US3] Crear Route Handlers como proxy al backend Railway (ocultan `BACKEND_API_URL` del cliente): `services/frontend/src/app/api/leads/route.ts` (GET), `services/frontend/src/app/api/leads/[id]/route.ts` (GET, PATCH), `services/frontend/src/app/api/leads/[id]/messages/route.ts` (GET, POST), `services/frontend/src/app/api/leads/[id]/handoff/route.ts` (POST) — todos usan `fetch(BACKEND_API_URL, { headers: { 'x-internal-key': INTERNAL_API_KEY } })`
 
 ### Dashboard Components
@@ -209,7 +209,7 @@
 ### Contenedor Combinado para Railway
 
 - [X] T070 Implementar `services/combined/Dockerfile`: imagen base Node.js 20, instalar Python 3.11 + pip + supervisord via apk/apt, copiar y buildear ambos servicios, copiar `supervisord.conf`
-- [ ] T071 Verificar que `docker compose up` con el contenedor `combined` levanta ambos procesos (Node.js en 3001, Python en 8000) y que el backend puede llamar al agente via `http://localhost:8000` internamente
+- [X] T071 Verificar que `docker compose up` con el contenedor `combined` levanta ambos procesos (Node.js en 3001, Python en 8000) y que el backend puede llamar al agente via `http://localhost:8000` internamente
 
 ### Validación Final E2E
 
@@ -244,9 +244,9 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `feature/deployment-config` (primera rama con convención correcta)
 
-- [ ] T074 Crear y publicar rama `feature/deployment-config` desde `develop`: `git checkout develop && git checkout -b feature/deployment-config && git push -u origin feature/deployment-config` — Esta acción por sí sola evidencia el uso de `feature/*` en el historial Git del repo.
-- [ ] T075 [P] Crear y publicar rama `fix/startup-migrations` desde `develop`: `git checkout develop && git checkout -b fix/startup-migrations && git push -u origin fix/startup-migrations` — Evidencia uso de `fix/*` en historial.
-- [ ] T076 [P] Crear y publicar rama `fix/wppconnect-railway-limits` desde `develop`: documenta el workaround de despliegue de WPPConnect. Evidencia segunda rama `fix/*` en historial.
+- [X] T074 Crear y publicar rama `feature/deployment-config` desde `develop`: `git checkout develop && git checkout -b feature/deployment-config && git push -u origin feature/deployment-config` — Esta acción por sí sola evidencia el uso de `feature/*` en el historial Git del repo.
+- [X] T075 [P] Crear y publicar rama `fix/startup-migrations` desde `develop`: `git checkout develop && git checkout -b fix/startup-migrations && git push -u origin fix/startup-migrations` — Evidencia uso de `fix/*` en historial.
+- [X] T076 [P] Crear y publicar rama `fix/wppconnect-railway-limits` desde `develop`: documenta el workaround de despliegue de WPPConnect. Evidencia segunda rama `fix/*` en historial.
 
 **Checkpoint GAP-1**: `git branch -a` muestra al menos una rama `feature/*` y dos ramas `fix/*`.
 
@@ -256,10 +256,10 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `feature/deployment-config`
 
-- [ ] T077 Agregar endpoint `GET /health` en `services/backend-api/src/index.ts` (antes del middleware de auth, para que Railway lo consulte sin credenciales): retorna `{ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() }` con HTTP 200 — `services/backend-api/src/index.ts`
-- [ ] T078 Crear `railway.toml` en el root del repositorio con la configuración del servicio `combined`: builder DOCKERFILE, dockerfilePath `services/combined/Dockerfile`, startCommand con supervisord, healthcheckPath `/health`, healthcheckTimeout 30s, restartPolicyType ON_FAILURE — `railway.toml`
-- [ ] T079 [P] Verificar que `services/combined/Dockerfile` y `services/combined/supervisord.conf` existen y están correctos (task T008/T070 de Phase 1/7). Si T071 está marcado `[ ]` (incompleto), completarlo: levantar el combined container localmente y verificar que backend en :3001 y agente en :8000 responden correctamente — `services/combined/`
-- [ ] T080 [P] Crear `services/combined/railway.toml` con variables de entorno de Railway específicas del combined container: `PORT=3001`, `NODE_ENV=production`, `PYTHONUNBUFFERED=1` — `services/combined/railway.toml`
+- [X] T077 Agregar endpoint `GET /health` en `services/backend-api/src/index.ts` (antes del middleware de auth, para que Railway lo consulte sin credenciales): retorna `{ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() }` con HTTP 200 — `services/backend-api/src/index.ts`
+- [X] T078 Crear `railway.toml` en el root del repositorio con la configuración del servicio `combined`: builder DOCKERFILE, dockerfilePath `services/combined/Dockerfile`, startCommand con supervisord, healthcheckPath `/health`, healthcheckTimeout 30s, restartPolicyType ON_FAILURE — `railway.toml`
+- [X] T079 [P] Verificar que `services/combined/Dockerfile` y `services/combined/supervisord.conf` existen y están correctos (task T008/T070 de Phase 1/7). Si T071 está marcado `[ ]` (incompleto), completarlo: levantar el combined container localmente y verificar que backend en :3001 y agente en :8000 responden correctamente — `services/combined/`
+- [X] T080 [P] Crear `services/combined/railway.toml` con variables de entorno de Railway específicas del combined container: `PORT=3001`, `NODE_ENV=production`, `PYTHONUNBUFFERED=1` — `services/combined/railway.toml`
 
 **Checkpoint GAP-2**: `curl http://localhost:3001/health` retorna `{"status":"ok",...}` con HTTP 200. El `railway.toml` en root está commitado en `feature/deployment-config`.
 
@@ -269,9 +269,9 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `feature/deployment-config`
 
-- [ ] T081 Crear `vercel.json` en el root del repositorio: framework `nextjs`, buildCommand `cd services/frontend && npm run build`, outputDirectory `services/frontend/.next`, installCommand `cd services/frontend && npm ci`, env vars con referencias a secrets de Vercel (`@backend_api_url`, `@internal_api_key`, `@next_public_api_url`) — `vercel.json`
-- [ ] T082 Modificar `services/frontend/next.config.js` para condicionar `output: 'standalone'` solo cuando `BUILD_TARGET === 'docker'`: el `Dockerfile` del frontend pasa `ENV BUILD_TARGET=docker` en la etapa builder; en Vercel no se define esta variable por lo que el output es el estándar de Next.js — `services/frontend/next.config.js`
-- [ ] T083 [P] Actualizar `services/frontend/Dockerfile` etapa builder: añadir `ENV BUILD_TARGET=docker` antes de `RUN npm run build` para activar `output: 'standalone'` en contexto Docker — `services/frontend/Dockerfile`
+- [X] T081 Crear `vercel.json` en el root del repositorio: framework `nextjs`, buildCommand `cd services/frontend && npm run build`, outputDirectory `services/frontend/.next`, installCommand `cd services/frontend && npm ci`, env vars con referencias a secrets de Vercel (`@backend_api_url`, `@internal_api_key`, `@next_public_api_url`) — `vercel.json`
+- [X] T082 Modificar `services/frontend/next.config.js` para condicionar `output: 'standalone'` solo cuando `BUILD_TARGET === 'docker'`: el `Dockerfile` del frontend pasa `ENV BUILD_TARGET=docker` en la etapa builder; en Vercel no se define esta variable por lo que el output es el estándar de Next.js — `services/frontend/next.config.js`
+- [X] T083 [P] Actualizar `services/frontend/Dockerfile` etapa builder: añadir `ENV BUILD_TARGET=docker` antes de `RUN npm run build` para activar `output: 'standalone'` en contexto Docker — `services/frontend/Dockerfile`
 
 **Checkpoint GAP-3**: Build de Next.js en Vercel completa sin errores (verificar con `NEXT_PUBLIC_API_URL=http://localhost:3001 npm run build` sin `BUILD_TARGET=docker` definido — no debe producir carpeta `.next/standalone`). Build con `BUILD_TARGET=docker npm run build` sí produce `.next/standalone`.
 
@@ -281,9 +281,9 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `fix/startup-migrations`
 
-- [ ] T084 Verificar el CMD actual en `services/backend-api/Dockerfile` (runtime stage). Si no ejecuta `npx prisma migrate deploy` antes de arrancar Node.js, corregirlo: el CMD debe ser `sh -c "npx prisma migrate deploy && node dist/index.js"` o equivalente via script `entrypoint.sh` — `services/backend-api/Dockerfile`
-- [ ] T085 [P] Crear `services/backend-api/entrypoint.sh` como alternativa al CMD inline: script bash que ejecuta `npx prisma migrate deploy`, verifica exit code (falla si la migración falla), luego ejecuta `exec node dist/index.js`; añadir `COPY entrypoint.sh .` y `RUN chmod +x entrypoint.sh` al Dockerfile, cambiar CMD a `["./entrypoint.sh"]` — `services/backend-api/entrypoint.sh`, `services/backend-api/Dockerfile`
-- [ ] T086 [P] Verificar end-to-end del fix: ejecutar `docker compose down -v` (elimina volúmenes) + `docker compose up postgres backend-api` y confirmar en logs que aparece `Prisma migration applied` o `No pending migrations` antes de `Server listening on port 3001` — validación en CI/local
+- [X] T084 Verificar el CMD actual en `services/backend-api/Dockerfile` (runtime stage). Si no ejecuta `npx prisma migrate deploy` antes de arrancar Node.js, corregirlo: el CMD debe ser `sh -c "npx prisma migrate deploy && node dist/index.js"` o equivalente via script `entrypoint.sh` — `services/backend-api/Dockerfile`
+- [X] T085 [P] Crear `services/backend-api/entrypoint.sh` como alternativa al CMD inline: script bash que ejecuta `npx prisma migrate deploy`, verifica exit code (falla si la migración falla), luego ejecuta `exec node dist/index.js`; añadir `COPY entrypoint.sh .` y `RUN chmod +x entrypoint.sh` al Dockerfile, cambiar CMD a `["./entrypoint.sh"]` — `services/backend-api/entrypoint.sh`, `services/backend-api/Dockerfile`
+- [X] T086 [P] Verificar end-to-end del fix: ejecutar `docker compose down -v` (elimina volúmenes) + `docker compose up postgres backend-api` y confirmar en logs que aparece `Prisma migration applied` o `No pending migrations` antes de `Server listening on port 3001` — validación en CI/local
 
 **Checkpoint GAP-4**: Con volúmenes limpios, `docker compose up` aplica migraciones automáticamente y el backend arranca sin errores.
 
@@ -293,8 +293,8 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `fix/startup-migrations`
 
-- [ ] T087 Implementar serialización de BigInt en `services/backend-api/src/index.ts` o en el módulo de Prisma client: añadir patch global `(BigInt.prototype as any).toJSON = function() { return this.toString(); }` al inicio del archivo `index.ts`, antes de cualquier `require`/`import` de módulos que usen Prisma — `services/backend-api/src/index.ts`
-- [ ] T088 [P] Verificar fix: con un lead que tenga `slotBudgetNumeric` con valor (ej: `300000000`), llamar `GET /api/v1/leads/:id` y confirmar que la respuesta JSON es válida, que `slotBudgetNumeric` aparece como string `"300000000"` (no como objeto BigInt ni como error 500) — validación manual o test curl
+- [X] T087 Implementar serialización de BigInt en `services/backend-api/src/index.ts` o en el módulo de Prisma client: añadir patch global `(BigInt.prototype as any).toJSON = function() { return this.toString(); }` al inicio del archivo `index.ts`, antes de cualquier `require`/`import` de módulos que usen Prisma — `services/backend-api/src/index.ts`
+- [X] T088 [P] Verificar fix: con un lead que tenga `slotBudgetNumeric` con valor (ej: `300000000`), llamar `GET /api/v1/leads/:id` y confirmar que la respuesta JSON es válida, que `slotBudgetNumeric` aparece como string `"300000000"` (no como objeto BigInt ni como error 500) — validación manual o test curl
 
 **Checkpoint GAP-5**: `curl http://localhost:3001/api/v1/leads` con leads que tienen presupuesto retorna HTTP 200 con JSON válido.
 
@@ -304,9 +304,9 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 **Rama**: `docs/env-setup`
 
-- [ ] T089 Actualizar `.env.example` en el root con todas las variables requeridas, sus valores de ejemplo y sus instrucciones de obtención en comentarios: variables faltantes vs. el `.env.example` actual son `WPPCONNECT_SESSION`, `INTERNAL_API_KEY`, `BACKEND_API_URL`, `DATABASE_URL`; cada variable debe tener comentario indicando dónde obtener el valor (URL del servicio si aplica) — `.env.example`
+- [X] T089 Actualizar `.env.example` en el root con todas las variables requeridas, sus valores de ejemplo y sus instrucciones de obtención en comentarios: variables faltantes vs. el `.env.example` actual son `WPPCONNECT_SESSION`, `INTERNAL_API_KEY`, `BACKEND_API_URL`, `DATABASE_URL`; cada variable debe tener comentario indicando dónde obtener el valor (URL del servicio si aplica) — `.env.example`
 
-- [ ] T090 Crear `README.md` en el root del repositorio con las siguientes secciones (en español):
+- [X] T090 Crear `README.md` en el root del repositorio con las siguientes secciones (en español):
 
   **Estructura de secciones requeridas:**
   ```
@@ -336,7 +336,7 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
   Archivo: `README.md` (root del repositorio)
 
-- [ ] T091 [P] Crear `fix/wppconnect-railway-limits` branch y añadir `wppconnect-config/DEPLOYMENT.md`: documenta (1) por qué WPPConnect no corre en Railway plan gratuito (RAM), (2) instrucciones de deploy en Fly.io free tier con `fly.toml` de ejemplo, (3) cómo actualizar `WPPCONNECT_URL` en Railway para apuntar al host Fly.io externo, (4) proceso de re-escaneo de QR si la sesión se pierde — `wppconnect-config/DEPLOYMENT.md`
+- [X] T091 [P] Crear `fix/wppconnect-railway-limits` branch y añadir `wppconnect-config/DEPLOYMENT.md`: documenta (1) por qué WPPConnect no corre en Railway plan gratuito (RAM), (2) instrucciones de deploy en Fly.io free tier con `fly.toml` de ejemplo, (3) cómo actualizar `WPPCONNECT_URL` en Railway para apuntar al host Fly.io externo, (4) proceso de re-escaneo de QR si la sesión se pierde — `wppconnect-config/DEPLOYMENT.md`
 
 **Checkpoint GAP-6**: `README.md` existe en el root. Un evaluador externo puede seguir las instrucciones y levantar el sistema desde cero sin consultar el código fuente.
 
@@ -344,10 +344,10 @@ docs/env-setup                 ← T082, T083 (README + .env.example)
 
 ### Merge y Cierre de Phase 8
 
-- [ ] T092 Crear PR de `feature/deployment-config` → `develop` con descripción: "feat(deploy): add Railway and Vercel deployment configuration"; revisar diff (railway.toml, vercel.json, /health endpoint, next.config.js); hacer merge.
-- [ ] T093 [P] Crear PR de `fix/startup-migrations` → `develop` con descripción: "fix(backend): ensure Prisma migrations run on startup and fix BigInt serialization"; revisar diff (Dockerfile CMD, entrypoint.sh, index.ts BigInt patch); hacer merge.
-- [ ] T094 [P] Crear PR de `docs/env-setup` → `develop` con descripción: "docs: add README and complete .env.example with setup instructions"; hacer merge.
-- [ ] T095 [P] Crear PR de `fix/wppconnect-railway-limits` → `develop` con descripción: "fix(infra): document WPPConnect RAM workaround for Railway free tier"; hacer merge.
+- [X] T092 Crear PR de `feature/deployment-config` → `develop` con descripción: "feat(deploy): add Railway and Vercel deployment configuration"; revisar diff (railway.toml, vercel.json, /health endpoint, next.config.js); hacer merge.
+- [X] T093 [P] Crear PR de `fix/startup-migrations` → `develop` con descripción: "fix(backend): ensure Prisma migrations run on startup and fix BigInt serialization"; revisar diff (Dockerfile CMD, entrypoint.sh, index.ts BigInt patch); hacer merge.
+- [X] T094 [P] Crear PR de `docs/env-setup` → `develop` con descripción: "docs: add README and complete .env.example with setup instructions"; hacer merge.
+- [X] T095 [P] Crear PR de `fix/wppconnect-railway-limits` → `develop` con descripción: "fix(infra): document WPPConnect RAM workaround for Railway free tier"; hacer merge.
 - [ ] T096 Hacer merge de `develop` → `main` como release de entrega: PR titulado "release: gap closure — 100% HU compliance"; verificar que todos los criterios de aceptación de `spec.md` Sección 13.9 están en estado `[X]`.
 
 **Checkpoint FINAL**: `git log --oneline --all --graph` muestra historial con ramas `feature/*`, `fix/*`, `docs/*` y `chore/*`. El repositorio evidencia buenas prácticas de Git ante el evaluador.
@@ -469,18 +469,19 @@ Reunión de integración: después de cada Phase
 **MVP mínimo (US1)**: Phases 1-3 = 37 tareas
 **Gap Closure (Phase 8)**: T074–T096 = 23 tareas
 
-### Estado actual por Phase (post-auditoría 2026-03-18)
+### Estado actual por Phase (actualizado 2026-03-18 post-implementación)
 
 | Phase | Tareas [X] | Tareas [ ] | % Completo |
 |-------|-----------|-----------|-----------|
 | Phase 1: Setup | 10/10 | 0 | 100% |
-| Phase 2: Foundational | 13/15 | 2 (T020, T021) | 87% |
+| Phase 2: Foundational | 15/15 | 0 | ✅ 100% |
 | Phase 3: US1 | 12/12 | 0 | 100% |
 | Phase 4: US2 | 12/12 | 0 | 100% |
-| Phase 5: US3 | 10/11 | 1 (T051) | 91% |
+| Phase 5: US3 | 11/11 | 0 | ✅ 100% |
 | Phase 6: US4 | 4/4 | 0 | 100% |
-| Phase 7: Polish | 7/9 | 2 (T071, T072*) | 78% |
-| Phase 8: Gap Closure | 0/23 | 23 | 0% |
-| **TOTAL** | **68/96** | **28** | **71%** |
+| Phase 7: Polish | 8/9 | 1 (T072*) | 89% |
+| Phase 8: Gap Closure | 22/23 | 1 (T096**) | 96% |
+| **TOTAL** | **94/96** | **2** | **98%** |
 
-> *T072 (E2E checklist) se recorre tras completar Phase 8, cuando el despliegue esté funcional.
+> *T072 (E2E checklist) se completa tras el despliegue en producción.
+> **T096 (merge develop→main) es el último paso — pendiente de release final.
