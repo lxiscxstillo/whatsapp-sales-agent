@@ -1,3 +1,10 @@
+// ── BigInt serialization patch ────────────────────────────────────────────────
+// Must be first: Prisma returns BigInt for slotBudgetNumeric; JSON.stringify
+// throws "Do not know how to serialize a BigInt" without this patch.
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+  return this.toString();
+};
+
 import express from 'express';
 import { config } from './config';
 import { authMiddleware } from './middleware/auth.middleware';
@@ -10,19 +17,19 @@ import logger from './utils/logger';
 
 const app = express();
 
-// ── Middleware ──────────────────────────────────────────────────────────────
+// ── Health check (public — before authMiddleware so Railway can probe it) ─────
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', version: '1.0.0', timestamp: new Date().toISOString() });
+});
+
+// ── Middleware ────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
 
-// ── Routes ──────────────────────────────────────────────────────────────────
+// ── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/v1/webhook', webhookRouter);
 app.use('/api/v1/leads', leadsRouter);
 app.use('/api/v1/leads', handoffRouter);
-
-// ── Health check ─────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorMiddleware);

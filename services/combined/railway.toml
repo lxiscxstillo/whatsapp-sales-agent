@@ -1,0 +1,18 @@
+# Railway variables specific to the combined container
+# These are injected at runtime alongside the secrets from Railway Dashboard
+
+[deploy]
+# PORT is set by Railway automatically; we bind backend-api to it
+# The Python agent binds to 8000 internally (not exposed)
+
+[[deploy.environmentVariables]]
+name = "PORT"
+value = "3001"
+
+[[deploy.environmentVariables]]
+name = "NODE_ENV"
+value = "production"
+
+[[deploy.environmentVariables]]
+name = "PYTHONUNBUFFERED"
+value = "1"

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Combined container: Node.js backend-api (port 3001) + Python agent-langgraph (port 8000)
-# Used for Railway production to reduce service count within free tier
+# Used for Railway production to reduce service count within the free tier.
 
 FROM node:20-alpine AS base
 
@@ -20,14 +20,15 @@ RUN apk add --no-cache \
 WORKDIR /app/backend
 
 COPY services/backend-api/package*.json ./
-RUN npm ci --only=production
-
-COPY services/backend-api/package*.json ./
+# Install all deps (including devDeps) needed for the TypeScript build
 RUN npm ci
+
 COPY services/backend-api/tsconfig.json ./
 COPY services/backend-api/src ./src
 COPY services/backend-api/prisma ./prisma
 RUN npx prisma generate && npm run build
+# Prune dev dependencies from runtime image
+RUN npm prune --production
 
 # ── Build Python agent ─────────────────────────────────────────────────────────
 WORKDIR /app/agent

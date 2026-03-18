@@ -11,6 +11,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# BUILD_TARGET=docker activates output:'standalone' in next.config.js
+# so that Docker gets a self-contained Node.js server (server.js)
+ENV BUILD_TARGET=docker
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
