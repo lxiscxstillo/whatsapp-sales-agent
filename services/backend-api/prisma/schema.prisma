@@ -1,0 +1,90 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEAD
+// Represents a unique real estate prospect identified by their WhatsApp number.
+// ─────────────────────────────────────────────────────────────────────────────
+model Lead {
+  id                 String     @id @default(cuid())
+  phone              String     @unique          // WhatsApp number e.g. "573001234567"
+  name               String?                    // Extracted by agent from conversation
+  status             LeadStatus @default(NEW)
+  interestLevel      Int?       @db.SmallInt    // 1-5 (1=cold, 5=very hot)
+  isHandoffRequested Boolean    @default(false)
+  handoffAt          DateTime?
+  handoffReason      String?    // "high_interest" | "explicit_request" | "max_ambiguity"
+  assignedTo         String?                    // Assigned human advisor email
+  agentNotes         String?                    // Free-form notes from advisor panel
+  ambiguityCount     Int        @default(0)     // Consecutive ambiguous messages counter
+
+  // ── SLOTS: information extracted by the agent ─────────────────────────────
+  slotPropertyType   String?    // "casa" | "apartamento" | "lote" | "oficina" | "local" | "otro"
+  slotCity           String?    // Main city or area
+  slotZone           String?    // Specific neighborhood or zone
+  slotBudget         String?    // Budget in free text e.g. "300 millones"
+  slotBudgetNumeric  BigInt?    // Normalized budget in COP
+  slotIntent         String?    // "comprar" | "arrendar"
+  slotBedrooms       String?    // Number of bedrooms or description
+  slotUrgency        String?    // Timeline expressed by lead
+  slotMainNeed       String?    // Main identified need
+  slotObjections     String[]   // Detected objections list
+
+  // ── Metadata ──────────────────────────────────────────────────────────────
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  messages           Message[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([isHandoffRequested])
+}
+
+enum LeadStatus {
+  NEW          // First contact, no qualification yet
+  QUALIFYING   // Agent is collecting information
+  HOT          // High purchase/rent intent detected
+  HANDOFF      // Ready for human advisor — no more auto-responses
+  PAUSED       // No activity > 48 hours
+  CLOSED       // Process closed (won or lost)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESSAGE
+// Immutable record of each conversation message.
+// ─────────────────────────────────────────────────────────────────────────────
+model Message {
+  id             String     @id @default(cuid())
+  leadId         String
+  lead           Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  wppMessageId   String?    @unique            // WPPConnect original ID (idempotency)
+  direction      Direction                     // INBOUND | OUTBOUND
+  senderType     SenderType                    // LEAD | AGENT | HUMAN
+  body           String                        // Message content
+  isAmbiguous    Boolean    @default(false)    // Agent flagged message as ambiguous
+  rawPayload     Json?                         // Raw WPPConnect payload (for debugging)
+  langsmithRunId String?                       // LangSmith Run ID for cross-reference
+  createdAt      DateTime   @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([direction])
+  @@index([wppMessageId])
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum SenderType {
+  LEAD    // Message sent by the prospect
+  AGENT   // Message generated automatically by LLM agent
+  HUMAN   // Message sent manually by a human advisor
+}
