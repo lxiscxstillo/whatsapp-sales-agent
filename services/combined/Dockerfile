@@ -27,8 +27,9 @@ COPY services/backend-api/tsconfig.json ./
 COPY services/backend-api/src ./src
 COPY services/backend-api/prisma ./prisma
 RUN npx prisma generate && npm run build
-# Prune dev dependencies from runtime image
-RUN npm prune --production
+# Re-add prisma CLI so migrate deploy works at runtime, then prune everything else
+RUN npm prune --production && \
+    npm install --no-save prisma@$(node -e "console.log(require('./node_modules/prisma/package.json').version)")
 
 # ── Build Python agent ─────────────────────────────────────────────────────────
 WORKDIR /app/agent
@@ -46,6 +47,8 @@ COPY services/agent-langgraph/src ./src
 WORKDIR /app
 
 COPY services/combined/supervisord.conf /etc/supervisord.conf
+COPY services/backend-api/entrypoint.sh /app/backend/entrypoint.sh
+RUN chmod +x /app/backend/entrypoint.sh
 
 EXPOSE 3001 8000
 
