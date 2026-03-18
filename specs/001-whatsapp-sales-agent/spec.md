@@ -2,7 +2,8 @@
 
 **Feature Branch**: `001-whatsapp-sales-agent`
 **Created**: 2026-03-17
-**Status**: Draft
+**Updated**: 2026-03-18
+**Status**: In Review — Gap Closure Post-Auditoría
 **Input**: Agente autónomo de ventas inmobiliarias conectado a WhatsApp con calificación de leads, handoff humano y trazabilidad completa.
 
 ---
@@ -1381,3 +1382,264 @@ El lead envía mensajes poco claros. El agente los maneja de forma natural sin r
 8. **Moneda**: Presupuesto en pesos colombianos (COP) por defecto.
 9. **Zona horaria**: Los timestamps del panel se muestran en UTC-5 (Colombia).
 10. **Cola de mensajes**: En MVP no hay cola de mensajes (RabbitMQ/Redis); el procesamiento secuencial por `leadId` se maneja con un lock simple en memoria del backend-api.
+
+---
+
+## 13. Gap Closure — Auditoría Post-Implementación (2026-03-18)
+
+> Esta sección formaliza los hallazgos de la auditoría técnica realizada el 2026-03-18 contra la Historia de Usuario original. El núcleo funcional del sistema está implementado al 100%. Los gaps identificados son exclusivamente de **despliegue, convención y arquitectura de arranque**. Las tareas de cierre se detallan en `tasks.md` Phase 8.
+
+---
+
+### 13.1 Estado de Cumplimiento por Criterio de Aceptación
+
+| Criterio HU | Descripción | Estado | Gap |
+|---|---|---|---|
+| Criterio 1 | Conexión WhatsApp — recibe y responde | ✅ COMPLETO | — |
+| Criterio 2 | Continuidad conversacional — no repite preguntas | ✅ COMPLETO | — |
+| Criterio 3 | Tono humano — suena como persona real | ✅ COMPLETO | — |
+| Criterio 4 | Calificación del lead — extrae y almacena slots | ✅ COMPLETO | — |
+| Criterio 5 | Contexto inmobiliario — tipo, presupuesto, zona, finalidad | ✅ COMPLETO | — |
+| Criterio 6 | Manejo de objeciones — 5 tipos cubiertos | ✅ COMPLETO | — |
+| Criterio 7 | Detección de interés — interest_level >= 4 → handoff | ✅ COMPLETO | — |
+| Criterio 8 | Visualización básica — panel web con leads y conversaciones | ✅ COMPLETO | — |
+| Criterio 9 | Despliegue Railway/Vercel — backend y frontend en producción | ❌ FALTANTE | Sin railway.toml ni vercel.json |
+| Criterio 10 | Buenas prácticas Git — ramas `feature/*`, `fix/*` | ⚠️ PARCIAL | Se usó `feat/*` en lugar de `feature/*` |
+| Criterio 11 | Arquitectura escalable — modular y mantenible | ✅ COMPLETO | Fix menor: BigInt, entrypoint |
+
+---
+
+### 13.2 Gap 1 — Convención de Ramas Git
+
+**Problema detectado:** El repositorio usa el prefijo `feat/` en lugar del prefijo `feature/` especificado en la Historia de Usuario. Las ramas existentes afectadas son:
+
+| Rama actual (incorrecta) | Rama correcta según HU |
+|---|---|
+| `feat/agent-langgraph` | `feature/lead-qualification` |
+| `feat/backend-api` | `feature/whatsapp-integration` |
+| `feat/database-schema` | (migrada a `chore/db-schema` — correcto) |
+| `feat/frontend-dashboard` | `feature/leads-interface` |
+
+**Adicionalmente:** No existe ninguna rama `fix/*` en el historial, lo que impide evidenciar el manejo de correcciones en ramas separadas (requerimiento explícito de la HU).
+
+**Resolución:**
+- Crear ramas `feature/*` con la convención exacta a partir de este punto. Las ramas `feat/*` existentes se conservan como historial; los nuevos desarrollos parten de ramas con nombre correcto.
+- Crear al menos dos ramas `fix/*` para correcciones concretas (ver Gap 4 y 5), generando así el historial de `fix/*` que el evaluador buscará.
+
+**Ramas nuevas requeridas:**
+
+```
+feature/deployment-config       ← railway.toml, vercel.json, README.md
+fix/startup-migrations          ← entrypoint Prisma + BigInt serialization
+fix/wppconnect-railway-limits   ← documentación de limitaciones y workaround
+docs/env-setup                  ← .env.example completo y documentado
+```
+
+---
+
+### 13.3 Gap 2 — Configuración de Despliegue Railway
+
+**Problema detectado:** No existe `railway.toml` ni ningún manifiesto de Railway en el repositorio. El Criterio 9 es bloqueante para la entrega.
+
+**Decisión de arquitectura:** Dado que WPPConnect requiere 512MB–1.5GB RAM (Puppeteer/Chromium) y Railway plan gratuito otorga 512MB por servicio, **WPPConnect no puede correr en Railway**. La arquitectura de despliegue se ajusta así:
+
+| Servicio | Plataforma | Notas |
+|---|---|---|
+| `backend-api` + `agent-langgraph` | Railway (contenedor `combined`) | Fusionados con supervisord. ~$8-12/mes |
+| `postgresql` | Railway Plugin | PostgreSQL managed, incluido en Hobby plan |
+| `wppconnect` | Fly.io free tier o VPS externo | Railway no soporta la RAM necesaria |
+| `frontend` | Vercel Hobby | Deploy directo sin Docker |
+
+**Archivos a crear:**
+
+```
+railway.toml                              ← Root: apunta al servicio combined
+services/combined/railway.toml            ← Configuración del combined container
+```
+
+**Especificación de `railway.toml` (root):**
+
+```toml
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "services/combined/Dockerfile"
+
+[deploy]
+startCommand = "supervisord -c /etc/supervisord.conf"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[environments.production.variables]
+PORT = "3001"
+NODE_ENV = "production"
+```
+
+**Endpoint de health check requerido:** `GET /health` en `backend-api` que retorna `{ status: "ok", version: "1.0.0", timestamp: ISO8601 }` con HTTP 200. Railway lo usa para determinar si el deploy fue exitoso.
+
+---
+
+### 13.4 Gap 3 — Configuración de Despliegue Vercel
+
+**Problema detectado:** El `Dockerfile` del frontend usa `output: "standalone"` de Next.js, que genera un servidor Node.js autónomo. Este modo es correcto para Docker/Railway pero **innecesario en Vercel**, que hace build directo del framework.
+
+**Para Vercel, `output: "standalone"` debe estar ausente o condicional.**
+
+**Archivos a crear/modificar:**
+
+```
+vercel.json                               ← Root del repo
+services/frontend/next.config.js          ← Condicionar output:standalone
+```
+
+**Especificación de `vercel.json`:**
+
+```json
+{
+  "framework": "nextjs",
+  "buildCommand": "cd services/frontend && npm run build",
+  "outputDirectory": "services/frontend/.next",
+  "installCommand": "cd services/frontend && npm ci",
+  "devCommand": "cd services/frontend && npm run dev",
+  "env": {
+    "BACKEND_API_URL": "@backend_api_url",
+    "INTERNAL_API_KEY": "@internal_api_key",
+    "NEXT_PUBLIC_API_URL": "@next_public_api_url"
+  }
+}
+```
+
+**Modificación de `next.config.js`:**
+
+```js
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // output: 'standalone' solo cuando se construye para Docker/Railway
+  // En Vercel, la plataforma gestiona el output directamente
+  ...(process.env.BUILD_TARGET === 'docker' && { output: 'standalone' }),
+};
+
+module.exports = nextConfig;
+```
+
+**Procedimiento de secrets en Vercel:**
+- Definir en Vercel Dashboard → Project → Settings → Environment Variables:
+  - `BACKEND_API_URL` = URL pública del backend Railway
+  - `INTERNAL_API_KEY` = clave interna compartida
+  - `NEXT_PUBLIC_API_URL` = URL pública de la API del backend
+
+---
+
+### 13.5 Gap 4 — Fix de Arquitectura: Entrypoint y Prisma Migrations
+
+**Problema detectado:** El `Dockerfile` del backend actualmente instalado en el repositorio usa `CMD ["npm", "run", "start"]` sin ejecutar `npx prisma migrate deploy` antes. En un deploy fresco en Railway, la base de datos no tendrá las tablas y el servicio fallará en runtime.
+
+**El spec en Sección 7 ya especifica el CMD correcto:**
+```dockerfile
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+```
+
+**Pero el Dockerfile actual en el repositorio no lo implementa.** Este es el fix de la rama `fix/startup-migrations`.
+
+**Verificación:** Al hacer `docker compose up` desde cero (sin volumen previo), el backend debe:
+1. Esperar a que PostgreSQL esté healthy (ya implementado con `depends_on`).
+2. Ejecutar `npx prisma migrate deploy` antes de arrancar Express.
+3. Arrancar Express exitosamente en el puerto 3001.
+
+---
+
+### 13.6 Gap 5 — Fix de Arquitectura: BigInt Serialization
+
+**Problema detectado:** El campo `slotBudgetNumeric` se almacena como `BigInt` en PostgreSQL (tipo `BIGINT`) y Prisma lo retorna como `BigInt` nativo de JavaScript. `JSON.stringify()` lanza `TypeError: Do not know how to serialize a BigInt` al serializar la respuesta de la API.
+
+**Escenario de falla:** `GET /api/v1/leads` o `GET /api/v1/leads/:id` cuando `slotBudgetNumeric` tiene valor → respuesta 500.
+
+**Fix requerido en `services/backend-api/src/index.ts`:**
+
+```typescript
+// Patch global para serialización BigInt en JSON
+(BigInt.prototype as any).toJSON = function () {
+  return this.toString();
+};
+```
+
+**Alternativa más explícita** (preferida para código claro):
+
+```typescript
+// En cada route que retorne leads, transformar antes de res.json():
+function serializeLead(lead: Lead) {
+  return {
+    ...lead,
+    slotBudgetNumeric: lead.slotBudgetNumeric?.toString() ?? null,
+  };
+}
+```
+
+**Rama:** `fix/startup-migrations` (agrupa ambos fixes de startup).
+
+---
+
+### 13.7 Gap 6 — Documentación de Variables de Entorno y README
+
+**Problema detectado:** El `.env.example` existente en el spec (Sección 7) lista las variables sin instrucciones de obtención. El repositorio carece de `README.md` en el root con instrucciones de setup, lo cual es requerimiento explícito de la HU ("instrucciones claras para replicar el entorno").
+
+**`.env.example` requerido** — Variables faltantes que deben añadirse:
+
+| Variable | Descripción | Cómo obtener |
+|---|---|---|
+| `POSTGRES_USER` | Usuario PostgreSQL | Definir libremente |
+| `POSTGRES_PASSWORD` | Contraseña PostgreSQL | Generar contraseña segura |
+| `POSTGRES_DB` | Nombre de la DB | Definir libremente |
+| `WPPCONNECT_SECRET_KEY` | Clave secreta de WPPConnect | Generar UUID o string aleatorio |
+| `WPPCONNECT_SESSION` | Nombre de la sesión WPP | Definir libremente (ej: `mi-empresa`) |
+| `GROQ_API_KEY` | API key de Groq | https://console.groq.com → API Keys |
+| `LANGCHAIN_API_KEY` | API key de LangSmith | https://smith.langchain.com → Settings → API Keys |
+| `LANGSMITH_PROJECT` | Nombre del proyecto en LangSmith | Crear proyecto en LangSmith Studio |
+| `INTERNAL_API_KEY` | Clave interna frontend↔backend | Generar UUID (ej: `openssl rand -hex 32`) |
+| `BACKEND_API_URL` | URL del backend (server-side Next.js) | `http://localhost:3001` en local; URL Railway en prod |
+| `NEXT_PUBLIC_API_URL` | URL del backend (client-side Next.js) | Igual que BACKEND_API_URL para local |
+| `DATABASE_URL` | Cadena de conexión PostgreSQL | Construida de las variables POSTGRES_* |
+
+**`README.md` requerido** — Secciones mínimas:
+
+```
+# WhatsApp Sales Agent
+## Arquitectura (diagrama ASCII)
+## Stack tecnológico
+## Prerequisitos (Docker, Node.js 20, Python 3.11)
+## Setup local (paso a paso con docker-compose)
+## Variables de entorno (referencia a .env.example)
+## Cómo escanear el QR de WhatsApp
+## Despliegue en Railway (pasos exactos)
+## Despliegue en Vercel (pasos exactos)
+## Acceso al panel web
+## LangSmith Studio — cómo ver las trazas
+```
+
+---
+
+### 13.8 Riesgos de Despliegue — Registro Formal
+
+Los siguientes riesgos identificados en la auditoría se registran formalmente para que sean tenidos en cuenta en el despliegue:
+
+| ID | Riesgo | Severidad | Mitigación |
+|---|---|---|---|
+| R-001 | WPPConnect excede RAM de Railway plan gratuito (512MB) | ALTO | Desplegar WPPConnect en Fly.io free tier (256MB disponibles — suficiente para sesión estable) |
+| R-002 | Pérdida de sesión WhatsApp en cada restart de Railway | ALTO | Usar volumen persistente de Railway (disponible en Hobby plan); documentar proceso de re-escaneo de QR |
+| R-003 | Crédito mensual Railway agotado por múltiples servicios | MEDIO | Fusión backend+agent en contenedor combined (ya en plan); PostgreSQL como plugin Railway (sin cargo adicional) |
+| R-004 | Timeout de agente (15s) demasiado corto en horas pico de Groq | MEDIO | Incrementar `AGENT_HTTP_TIMEOUT` a 25s; implementar mensaje de "procesando..." al lead si supera 10s |
+| R-005 | Frontend Vercel timeout 10s en serverless functions (Route Handlers) | BAJO | Los Route Handlers solo son proxy liviano (<200ms); el agente no es invocado desde Vercel |
+
+---
+
+### 13.9 Criterios de Aceptación para el Gap Closure
+
+Antes de considerar el sistema listo para entrega, verificar:
+
+- [ ] **GAP-1**: Existe al menos una rama `feature/*` y una rama `fix/*` en el historial del repositorio visible en `git branch -a`.
+- [ ] **GAP-2**: `railway.toml` existe en el root. El servicio combined arranca correctamente en Railway con healthcheck en `/health` retornando 200.
+- [ ] **GAP-3**: `vercel.json` existe en el root. El frontend deploya en Vercel sin errores de build.
+- [ ] **GAP-4**: Al ejecutar `docker compose down -v && docker compose up` (volúmenes limpios), el backend aplica migraciones Prisma automáticamente antes de arrancar.
+- [ ] **GAP-5**: `GET /api/v1/leads` retorna 200 con JSON válido cuando algún lead tiene `slotBudgetNumeric` con valor (sin `TypeError: Do not know how to serialize a BigInt`).
+- [ ] **GAP-6**: `README.md` en el root contiene instrucciones suficientes para que un evaluador externo replique el entorno desde cero.
