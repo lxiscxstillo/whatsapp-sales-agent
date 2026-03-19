@@ -482,6 +482,33 @@ Reunión de integración: después de cada Phase
 | Phase 7: Polish | 8/9 | 1 (T072*) | 89% |
 | Phase 8: Gap Closure | 22/23 | 1 (T096**) | 96% |
 | **TOTAL** | **94/96** | **2** | **98%** |
+| Phase 9: Ultra-Modern Dashboard | 0/15 | 15 | 0% |
 
 > *T072 (E2E checklist) se completa tras el despliegue en producción.
 > **T096 (merge develop→main) es el último paso — pendiente de release final.
+
+---
+
+## Phase 9: Ultra-Modern Dashboard
+
+**Purpose**: Reconstrucción completa del frontend como Real Estate Dashboard ultra-moderno para agentes inmobiliarios no técnicos. Inspirado en Apple (limpieza), Mercado Libre (eficiencia) y Linear (fluidez).
+
+**Rama**: `feature/ultra-modern-dashboard`
+
+**Design System**: Ver spec.md Sección 14 para tokens, colores semánticos y criterios de aceptación.
+
+- [ ] T097 [P] Actualizar `spec.md` con sección 14 "UI/UX Design System" — define paleta semántica, animaciones, componentes y layout responsive — `specs/001-whatsapp-sales-agent/spec.md`
+- [ ] T098 [P] Agregar `framer-motion@^11` a `package.json` del frontend y ejecutar `npm install` — `services/frontend/package.json`
+- [ ] T099 [P] Actualizar `globals.css`: scrollbar personalizado, smooth scroll, antialiased typography — `services/frontend/src/app/globals.css`
+- [ ] T100 Crear `components/Sidebar.tsx` (client): sidebar oscuro slate-900 con logo, nav por estado con íconos semánticos + contadores, drawer mobile con `AnimatePresence` — `services/frontend/src/components/Sidebar.tsx`
+- [ ] T101 [P] Reescribir `components/StatusBadge.tsx`: ícono Lucide por estado + color semántico + `animate-pulse` para HANDOFF — `services/frontend/src/components/StatusBadge.tsx`
+- [ ] T102 Crear `components/LeadCard.tsx` (client): tarjeta con borde-izquierdo por estado, avatar con iniciales, chips de slots, estrellas de interés, tiempo relativo, hover elevación — `services/frontend/src/components/LeadCard.tsx`
+- [ ] T103 [P] Reescribir `components/MessageBubble.tsx`: burbujas con avatar icono por tipo (User/Bot/UserCheck), esquina chata del lado emisor, sombra de color — `services/frontend/src/components/MessageBubble.tsx`
+- [ ] T104 Reescribir `dashboard/layout.tsx`: servidor fetcha counts, renderiza `<Sidebar>` + `<main>` — `services/frontend/src/app/dashboard/layout.tsx`
+- [ ] T105 Reescribir `dashboard/page.tsx`: servidor fetcha stats, saludo dinámico por hora, StatsBar 4 tarjetas (Total/Calientes/Handoff/Cerrados), pasa a `LeadsListClient` — `services/frontend/src/app/dashboard/page.tsx`
+- [ ] T106 Reescribir `dashboard/LeadsListClient.tsx` (client): grid 1→2→3 cols, stagger framer-motion en entrada, skeleton loader con `animate-pulse`, empty state — `services/frontend/src/app/dashboard/LeadsListClient.tsx`
+- [ ] T107 Reescribir `dashboard/[leadId]/page.tsx`: header con back + nombre + status + handoff banner, layout 2-panel (chat + info panel desktop), pasa `isHandoff` a `ReplyForm` — `services/frontend/src/app/dashboard/[leadId]/page.tsx`
+- [ ] T108 Reescribir `dashboard/[leadId]/ConversationClient.tsx` (client): `AnimatePresence` para nuevos mensajes, empty state con ícono, fondo slate-50 — `services/frontend/src/app/dashboard/[leadId]/ConversationClient.tsx`
+- [ ] T109 Reescribir `dashboard/[leadId]/ReplyForm.tsx` (client): textarea mejorado, botón Send (indigo) + botón Handoff Humano (rojo prominente) con estados loading/done, `whileTap` framer-motion — `services/frontend/src/app/dashboard/[leadId]/ReplyForm.tsx`
+- [ ] T110 [P] Eliminar `components/LeadRow.tsx` obsoleto — reemplazado por `LeadCard.tsx` — `services/frontend/src/components/LeadRow.tsx`
+- [ ] T111 [P] Verificar build Next.js sin errores TypeScript (`npm run build`) y confirmar criterios de aceptación DS-1 a DS-7 de spec Sección 14
