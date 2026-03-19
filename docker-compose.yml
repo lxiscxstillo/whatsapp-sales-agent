@@ -21,7 +21,9 @@ services:
 
   # ── WPPConnect Server ───────────────────────────────────────────────────────
   wppconnect:
-    image: wppconnect/server-cli:latest
+    build:
+      context: ./wppconnect-config
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "21465:21465"
@@ -46,7 +48,9 @@ services:
     environment:
       GROQ_API_KEY: ${GROQ_API_KEY}
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      LANGSMITH_API_KEY: ${LANGCHAIN_API_KEY}
       LANGCHAIN_TRACING_V2: "true"
+      LANGSMITH_TRACING: "true"
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     networks:
@@ -70,6 +74,7 @@ services:
       WPPCONNECT_SESSION: ${WPPCONNECT_SESSION}
       AGENT_URL: http://agent-langgraph:8000
       LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY}
+      LANGSMITH_API_KEY: ${LANGCHAIN_API_KEY}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       NODE_ENV: production
