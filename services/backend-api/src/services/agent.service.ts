@@ -4,7 +4,7 @@ import logger from '../utils/logger';
 
 const agentClient = axios.create({
   baseURL: config.AGENT_URL,
-  timeout: 15000,
+  timeout: 60000,
 });
 
 export interface AgentRequest {

@@ -13,11 +13,11 @@ export const webhookRouter = Router();
 const WebhookPayloadSchema = z.object({
   id: z.string(),
   from: z.string(),
-  body: z.string(),
+  body: z.string().optional().default(''),
   type: z.string(),
   timestamp: z.number(),
   fromMe: z.boolean(),
-  isGroup: z.boolean(),
+  isGroupMsg: z.boolean(),
   session: z.string().optional(),
   event: z.string().optional(),
 });
@@ -25,6 +25,11 @@ const WebhookPayloadSchema = z.object({
 // ─── POST /api/v1/webhook/message ─────────────────────────────────────────────
 
 webhookRouter.post('/message', async (req: Request, res: Response, next: NextFunction) => {
+  // Filter non-message events (onack, onpresencechanged, etc.)
+  if (req.body?.event && req.body.event !== 'onmessage') {
+    return res.status(200).json({ ignored: req.body.event });
+  }
+
   // Parse and validate payload
   const parsed = WebhookPayloadSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -33,10 +38,11 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
 
   const payload = parsed.data;
 
-  // Filter self-messages, groups, and non-text messages
+  // Filter self-messages, groups, non-text messages, and @lid (linked device) contacts
   if (payload.fromMe) return res.status(200).json({ ignored: 'fromMe' });
-  if (payload.isGroup) return res.status(200).json({ ignored: 'isGroup' });
+  if (payload.isGroupMsg) return res.status(200).json({ ignored: 'isGroup' });
   if (payload.type !== 'chat') return res.status(200).json({ ignored: 'non-chat type' });
+  if (!payload.from.endsWith('@c.us')) return res.status(200).json({ ignored: 'non-standard-id' });
 
   const phone = payload.from.replace('@c.us', '');
 
