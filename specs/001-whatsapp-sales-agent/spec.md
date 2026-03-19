@@ -1643,3 +1643,183 @@ Antes de considerar el sistema listo para entrega, verificar:
 - [X] **GAP-4**: `services/backend-api/entrypoint.sh` ejecuta `npx prisma migrate deploy` con check de exit code antes de `node dist/index.js`. Dockerfile usa el entrypoint como CMD. Prisma CLI disponible en runtime via reinstall post-prune.
 - [X] **GAP-5**: `BigInt.prototype.toJSON` patch implementado al inicio de `index.ts` (antes de cualquier import de Prisma). `slotBudgetNumeric` se serializa como string en JSON.
 - [X] **GAP-6**: `README.md` en root con arquitectura ASCII, stack table, setup local paso a paso, guías de despliegue Railway/Fly.io/Vercel, y referencia a `.env.example` completo.
+
+---
+
+## 14. UI/UX Design System — Ultra-Modern Real Estate Dashboard
+
+**Rama**: `feature/ultra-modern-dashboard`
+**Audiencia**: Agentes inmobiliarios no técnicos
+**Filosofía de diseño**: Limpieza de Apple · Eficiencia de Mercado Libre · Fluidez de Linear
+
+---
+
+### 14.1 Stack de UI
+
+| Capa | Tecnología | Versión | Justificación |
+|---|---|---|---|
+| Estilos base | Tailwind CSS | 3.4.x | Utility-first, design tokens, mobile-first |
+| Animaciones | Framer Motion | 11.x | Micro-interacciones fluidas, spring physics |
+| Iconografía | Lucide React | 0.379+ | Íconos SVG consistentes, tree-shaking |
+| Fuente | Inter (Google Fonts) | Variable | Legibilidad máxima en pantallas pequeñas |
+| Componentes base | shadcn/ui + Radix UI | latest | Accesibilidad, composable |
+
+---
+
+### 14.2 Sistema de Colores Semánticos
+
+Los colores NO son decorativos — comunican el estado del lead al asesor en un vistazo.
+
+#### Paleta Base
+
+```
+Background:   #F8FAFC  (slate-50)   — fondo principal, limpio
+Surface:      #FFFFFF               — tarjetas y paneles
+Sidebar:      #0F172A  (slate-900)  — navegación oscura, autoridad
+Border:       #E2E8F0  (slate-200)  — separadores sutiles
+Text primary: #0F172A  (slate-900)  — texto principal
+Text muted:   #64748B  (slate-500)  — texto secundario
+Accent:       #6366F1  (indigo-500) — acciones primarias, CTA
+```
+
+#### Colores de Estado (semánticos)
+
+| Estado | Color | Hex | Icono Lucide | Comportamiento |
+|---|---|---|---|---|
+| NEW | Violet | `#8B5CF6` | `Sparkles` | estático |
+| QUALIFYING | Blue | `#3B82F6` | `Search` | estático |
+| HOT | Orange | `#F97316` | `Flame` | leve glow |
+| HANDOFF | Red | `#EF4444` | `PhoneForwarded` | **animate-pulse** |
+| PAUSED | Amber | `#F59E0B` | `Clock` | estático |
+| CLOSED | Emerald | `#10B981` | `CheckCircle` | estático |
+
+---
+
+### 14.3 Tipografía
+
+```
+Display:   font-bold, text-2xl/3xl, tracking-tight   — headings de sección
+Title:     font-semibold, text-base/lg               — títulos de card/panel
+Body:      font-normal, text-sm, leading-relaxed     — contenido general
+Label:     font-semibold, text-xs, uppercase, tracking-wider — etiquetas
+Caption:   font-normal, text-xs, text-slate-400      — metadatos (tiempo, etc.)
+Badge:     font-semibold, text-xs                    — status badges
+```
+
+---
+
+### 14.4 Componentes del Design System
+
+#### StatusBadge
+- Composición: `[icono 12px] + [label texto]`
+- Forma: `rounded-full`, `px-2.5 py-1`
+- Animación: HANDOFF aplica `animate-pulse` desde Tailwind
+- Variantes: una por cada `LeadStatus` (6 total)
+
+#### LeadCard
+- Borde izquierdo de 4px con color semántico del estado
+- Avatar con iniciales del nombre del lead (color según estado)
+- Chips de slots: ciudad (MapPin), tipo (Home), presupuesto (DollarSign)
+- Rating de interés: 5 estrellas `Star` de Lucide (fill amber/slate)
+- Tiempo relativo: `hace Xm / hace Xh / hace Xd`
+- Hover: `hover:-translate-y-0.5` + `hover:shadow-md`
+
+#### Sidebar
+- Fondo: `bg-slate-900`
+- Logo: icono Building2 en cuadrado indigo + nombre
+- Items de navegación: dot coloreado + icono + label + contador
+- Item activo: `bg-indigo-500/20 text-indigo-300`
+- Mobile: drawer con `AnimatePresence` + `motion.aside` slide desde izquierda
+- Trigger mobile: botón hamburguesa fijo top-left
+
+#### StatsBar (Dashboard header)
+- 4 tarjetas: Total, Calientes (orange gradient), Handoff (red gradient), Cerrados (emerald gradient)
+- Número grande (`text-3xl font-bold`) + descripción pequeña
+- Grid 2 cols (mobile) → 4 cols (desktop)
+
+#### MessageBubble
+- Inbound (lead): fondo blanco, borde slate, avatar User icon izquierda
+- Outbound IA: fondo indigo, avatar Bot icon derecha
+- Outbound humano: fondo emerald, avatar UserCheck icon derecha
+- Forma: `rounded-2xl` con esquina chata en el lado del emisor
+- Sombra sutil de color del emisor
+
+#### ReplyForm
+- Textarea con fondo `bg-slate-50`, focus `ring-indigo-300`
+- Botón enviar: icono `Send`, fondo indigo, `rounded-xl`
+- Botón Handoff Humano: icono `PhoneForwarded`, fondo rojo, prominente
+- Estado cargando: `Loader2` animado en lugar del ícono
+- Banner informativo si el lead ya está en HANDOFF
+
+---
+
+### 14.5 Animaciones (Framer Motion)
+
+| Elemento | Animación | Config |
+|---|---|---|
+| Lead cards en lista | Stagger entry desde abajo | `staggerChildren: 0.05`, `y: 16 → 0` |
+| Message bubbles | Slide up + fade in | `y: 10 → 0`, `scale: 0.97 → 1`, spring |
+| Sidebar mobile | Slide desde izquierda | `x: -240 → 0`, spring `damping:25` |
+| Overlay mobile | Fade in/out | `opacity: 0 → 1` |
+| Botones CTA | Scale on press | `whileTap: { scale: 0.95 }` |
+| Loading skeleton | CSS `animate-pulse` | Tailwind built-in |
+
+---
+
+### 14.6 Layout y Responsividad
+
+#### Mobile First
+
+```
+Mobile (< 768px):
+  - Sidebar: oculto, accesible via hamburger drawer
+  - Lead cards: 1 columna
+  - Lead detail: header fijo + conversación full width + panel info oculto
+  - Reply form: botones apilados verticalmente
+
+Tablet (768px – 1024px):
+  - Lead cards: 2 columnas (md:grid-cols-2)
+  - Lead detail: sin panel info lateral
+
+Desktop (> 1024px):
+  - Sidebar: visible fijo izquierda (w-60)
+  - Lead cards: 3 columnas (xl:grid-cols-3)
+  - Lead detail: conversación + panel info lateral (w-72)
+```
+
+---
+
+### 14.7 Estructura de Archivos del Frontend
+
+```
+services/frontend/src/
+├── app/
+│   ├── dashboard/
+│   │   ├── layout.tsx           — Server: fetcha counts, renderiza Sidebar
+│   │   ├── page.tsx             — Server: stats header + LeadsListClient
+│   │   ├── LeadsListClient.tsx  — Client: card grid con framer-motion stagger
+│   │   └── [leadId]/
+│   │       ├── page.tsx         — Server: lead detail (header + 2 paneles)
+│   │       ├── ConversationClient.tsx — Client: chat con AnimatePresence
+│   │       └── ReplyForm.tsx    — Client: reply + handoff button
+│   └── globals.css              — Tokens + scrollbar custom
+├── components/
+│   ├── Sidebar.tsx              — Client: dark sidebar + mobile drawer
+│   ├── LeadCard.tsx             — Client: tarjeta de lead con border-status
+│   ├── StatusBadge.tsx          — Server-compatible: badge semántico con icono
+│   └── MessageBubble.tsx        — Server-compatible: burbuja de mensaje
+└── types/
+    └── lead.ts                  — (sin cambios)
+```
+
+---
+
+### 14.8 Criterios de Aceptación del Design System
+
+- [ ] **DS-1**: Todos los estados de lead son identificables a color en < 1 segundo sin leer el texto.
+- [ ] **DS-2**: El botón de Handoff Humano es el elemento visualmente más urgente de la vista de detalle.
+- [ ] **DS-3**: El dashboard es completamente usable desde un iPhone 12 (390px ancho).
+- [ ] **DS-4**: Las animaciones no bloquean la interacción — todas usan `will-change: transform`.
+- [ ] **DS-5**: El skeleton loader aparece siempre que los datos estén cargando (nunca pantalla en blanco).
+- [ ] **DS-6**: Todos los botones tienen estado `disabled` visual cuando aplica.
+- [ ] **DS-7**: La fuente Inter se carga desde Google Fonts con `display: swap`.
