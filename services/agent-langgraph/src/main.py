@@ -5,10 +5,10 @@ Uses AsyncPostgresSaver for conversation state persistence.
 thread_id = sender phone number (natural conversation isolation).
 """
 
-import os
+import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional, Any
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -64,26 +64,61 @@ class ProcessResponse(BaseModel):
 
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Initialize AsyncPostgresSaver and compile the graph on startup."""
-    global _compiled_graph
-
+async def _init_graph_with_retry(max_attempts: int = 5, base_delay: float = 3.0):
+    """Connect to Postgres and compile the graph, retrying on transient failures."""
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    import psycopg
+    from psycopg_pool import AsyncConnectionPool
 
     database_url = settings.database_url
-    # LangGraph checkpoint requires standard postgresql:// scheme
     pg_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
-    async with await psycopg.AsyncConnection.connect(pg_url, autocommit=True) as conn:
-        checkpointer = AsyncPostgresSaver(conn)
-        await checkpointer.setup()
-        _compiled_graph = build_graph(checkpointer)
-        logger.info("LangGraph compiled with AsyncPostgresSaver")
-        yield
+    for attempt in range(1, max_attempts + 1):
+        try:
+            pool = AsyncConnectionPool(
+                conninfo=pg_url,
+                max_size=10,
+                max_idle=300,          # recycle idle connections after 5 min
+                reconnect_timeout=30,
+                open=False,
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    # TCP keepalive — detect dead connections before using them
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 5,
+                },
+            )
+            await pool.open()
+            checkpointer = AsyncPostgresSaver(pool)
+            await checkpointer.setup()
+            graph = build_graph(checkpointer)
+            logger.info("LangGraph compiled with AsyncPostgresSaver (attempt %d)", attempt)
+            return pool, graph
+        except Exception as exc:
+            delay = base_delay * (2 ** (attempt - 1))
+            if attempt == max_attempts:
+                logger.error("Failed to initialise graph after %d attempts: %s", max_attempts, exc)
+                raise
+            logger.warning(
+                "Graph init failed (attempt %d/%d): %s — retrying in %.0fs",
+                attempt, max_attempts, exc, delay,
+            )
+            await asyncio.sleep(delay)
 
-    logger.info("Agent shutting down")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize AsyncPostgresSaver with a connection pool and compile the graph on startup."""
+    global _compiled_graph
+
+    pool, _compiled_graph = await _init_graph_with_retry()
+    try:
+        yield
+    finally:
+        await pool.close()
+        logger.info("Agent shutting down")
 
 
 # ─── App ──────────────────────────────────────────────────────────────────────
@@ -97,7 +132,9 @@ app = FastAPI(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "graph_ready": _compiled_graph is not None}
+    if _compiled_graph is None:
+        raise HTTPException(status_code=503, detail="Graph not ready")
+    return {"status": "ok", "graph_ready": True}
 
 
 @app.post("/agent/process", response_model=ProcessResponse)

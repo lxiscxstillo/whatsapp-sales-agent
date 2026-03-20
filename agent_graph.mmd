@@ -1,0 +1,26 @@
+flowchart TD
+    __start__(["▶ START"]):::startend
+    receive_message["receive_message"]:::node
+    detect_intent["detect_intent"]:::node
+    slot_check["slot_check"]:::node
+    fallback["fallback"]:::node
+    handoff["handoff"]:::node
+    evaluate_lead["evaluate_lead"]:::node
+    generate_response["generate_response"]:::node
+    __end__(["⏹ END"]):::startend
+
+    __start__ --> receive_message
+    receive_message --> detect_intent
+    detect_intent -->|"intent ≠ AMBIGUOUS/OFF_TOPIC/HANDOFF"| slot_check
+    detect_intent -->|"AMBIGUOUS / OFF_TOPIC"| fallback
+    detect_intent -->|"HANDOFF_REQUEST / lead en handoff"| handoff
+    fallback -->|"ESCALATE_HANDOFF"| handoff
+    fallback -->|"ASK_CLARIFICATION / OFF_TOPIC_REDIRECT"| __end__
+    slot_check --> evaluate_lead
+    evaluate_lead -->|"needs_handoff = true"| handoff
+    evaluate_lead -->|"needs_handoff = false"| generate_response
+    generate_response --> __end__
+    handoff --> __end__
+
+    classDef startend fill:#1e293b,stroke:#1e293b,color:#f8fafc,rx:20
+    classDef node fill:#ffffff,stroke:#3b82f6,color:#1e293b,rx:8
