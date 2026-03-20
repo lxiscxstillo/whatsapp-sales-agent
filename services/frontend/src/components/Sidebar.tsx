@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   BarChart3,
+  Smartphone,
 } from 'lucide-react';
 import type { Lead, PaginatedResponse } from '@/types/lead';
 
@@ -32,6 +33,15 @@ const STATUS_CONFIG = [
 
 interface Props {
   counts?: Record<string, number>;
+}
+
+function useWhatsAppStatus() {
+  const { data } = useSWR<{ connected: boolean }>(
+    '/api/whatsapp',
+    fetcher,
+    { refreshInterval: 10_000, dedupingInterval: 5_000 }
+  );
+  return data;
 }
 
 function useLiveCounts(initial?: Record<string, number>) {
@@ -52,6 +62,7 @@ function useLiveCounts(initial?: Record<string, number>) {
 
 function SidebarContent({ counts: initialCounts, onClose }: Props & { onClose?: () => void }) {
   const counts = useLiveCounts(initialCounts);
+  const wppStatus = useWhatsAppStatus();
   const pathname = usePathname();
 
   return (
@@ -142,6 +153,45 @@ function SidebarContent({ counts: initialCounts, onClose }: Props & { onClose?: 
               );
             })}
           </div>
+        </div>
+
+        {/* Tools section */}
+        <div className="mt-4">
+          <p className="text-xs text-slate-600 font-semibold uppercase tracking-wider px-3 mb-2">
+            Herramientas
+          </p>
+          <Link
+            href="/dashboard/whatsapp"
+            onClick={onClose}
+            className={`flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all duration-150 ${
+              pathname === '/dashboard/whatsapp'
+                ? 'bg-white/10 text-white'
+                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+            }`}
+          >
+            <div
+              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                !wppStatus
+                  ? 'bg-slate-600'
+                  : wppStatus.connected
+                  ? 'bg-emerald-400 animate-pulse'
+                  : 'bg-amber-400'
+              }`}
+            />
+            <Smartphone className="w-4 h-4 flex-shrink-0 text-slate-400" />
+            <span>WhatsApp</span>
+            <span
+              className={`ml-auto text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                !wppStatus
+                  ? 'bg-white/10 text-slate-500'
+                  : wppStatus.connected
+                  ? 'bg-emerald-500/20 text-emerald-400'
+                  : 'bg-amber-500/20 text-amber-400'
+              }`}
+            >
+              {!wppStatus ? '...' : wppStatus.connected ? 'ON' : 'OFF'}
+            </span>
+          </Link>
         </div>
       </nav>
 
