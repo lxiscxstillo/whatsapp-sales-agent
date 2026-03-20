@@ -130,7 +130,7 @@ app = FastAPI(
 )
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     if _compiled_graph is None:
         raise HTTPException(status_code=503, detail="Graph not ready")
