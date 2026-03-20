@@ -1,11 +1,24 @@
 {
-  "secretKey": "changeme",
+  "secretKey": "dev_secret_key",
   "host": "http://localhost",
   "port": 21465,
   "deviceName": "Asesor Inmobiliario",
   "poweredBy": "WPPConnect-Server",
   "tokenStoreType": "file",
   "customUserDataDir": "./userDataDir/",
+  "createOptions": {
+    "autoClose": 0,
+    "deviceSyncTimeout": 0,
+    "args": [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-accelerated-2d-canvas",
+      "--no-first-run",
+      "--no-zygote",
+      "--disable-gpu"
+    ]
+  },
   "webhook": {
     "url": "http://backend-api:3001/api/v1/webhook/message",
     "readMessage": true,

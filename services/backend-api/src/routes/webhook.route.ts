@@ -13,11 +13,11 @@ export const webhookRouter = Router();
 const WebhookPayloadSchema = z.object({
   id: z.string(),
   from: z.string(),
-  body: z.string(),
+  body: z.string().optional().default(''),
   type: z.string(),
   timestamp: z.number(),
   fromMe: z.boolean(),
-  isGroup: z.boolean(),
+  isGroupMsg: z.boolean(),
   session: z.string().optional(),
   event: z.string().optional(),
 });
@@ -25,6 +25,11 @@ const WebhookPayloadSchema = z.object({
 // ─── POST /api/v1/webhook/message ─────────────────────────────────────────────
 
 webhookRouter.post('/message', async (req: Request, res: Response, next: NextFunction) => {
+  // Filter non-message events (onack, onpresencechanged, etc.)
+  if (req.body?.event && req.body.event !== 'onmessage') {
+    return res.status(200).json({ ignored: req.body.event });
+  }
+
   // Parse and validate payload
   const parsed = WebhookPayloadSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -33,12 +38,23 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
 
   const payload = parsed.data;
 
-  // Filter self-messages, groups, and non-text messages
+  // Filter self-messages, groups, non-text messages, and @lid (linked device) contacts
   if (payload.fromMe) return res.status(200).json({ ignored: 'fromMe' });
-  if (payload.isGroup) return res.status(200).json({ ignored: 'isGroup' });
+  if (payload.isGroupMsg) return res.status(200).json({ ignored: 'isGroup' });
   if (payload.type !== 'chat') return res.status(200).json({ ignored: 'non-chat type' });
 
-  const phone = payload.from.replace('@c.us', '');
+  // Accept @c.us, @s.whatsapp.net, and @lid (WhatsApp privacy mode) formats
+  const fromLower = payload.from.toLowerCase();
+  const isLid = fromLower.endsWith('@lid');
+  if (!fromLower.endsWith('@c.us') && !fromLower.endsWith('@s.whatsapp.net') && !isLid) {
+    return res.status(200).json({ ignored: 'non-standard-id', from: payload.from });
+  }
+
+  // For @lid users store the full LID as the identifier (e.g. "78718378717325@lid")
+  // For normal users strip the domain suffix to get the phone number
+  const phone = isLid
+    ? payload.from
+    : payload.from.replace(/@c\.us$|@s\.whatsapp\.net$/i, '');
 
   try {
     // 1. Idempotency check
@@ -82,21 +98,44 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
       rawPayload: payload as Record<string, unknown>,
     });
 
-    // 5. If lead is already in HANDOFF, do not invoke agent
-    if (lead.status === 'HANDOFF') {
-      return res.status(200).json({ status: 'handoff_paused' });
+    // 5. If lead is HANDOFF, PAUSED or CLOSED, do not invoke agent
+    if (['HANDOFF', 'PAUSED', 'CLOSED'].includes(lead.status)) {
+      return res.status(200).json({ status: 'agent_stopped', reason: lead.status.toLowerCase() });
     }
 
-    // 6. Invoke agent
-    const agentResult = await agentService.processMessage({
-      phone,
-      message: payload.body,
-      leadId: lead.id,
-      leadStatus: lead.status.toLowerCase(),
-      slots: currentSlots,
-      ambiguityCounter: lead.ambiguityCount,
-      interestLevel: lead.interestLevel ?? 1,
-    });
+    // 6. Invoke agent — wrapped in its own try/catch for graceful degradation.
+    // If the agent is unavailable or times out, we send a friendly fallback
+    // message to the lead instead of returning 500 to WPPConnect (which would
+    // cause retries and duplicate processing).
+    let agentResult: Awaited<ReturnType<typeof agentService.processMessage>>;
+    try {
+      agentResult = await agentService.processMessage({
+        phone,
+        message: payload.body,
+        leadId: lead.id,
+        leadStatus: lead.status.toLowerCase(),
+        slots: currentSlots,
+        ambiguityCounter: lead.ambiguityCount,
+        interestLevel: lead.interestLevel ?? 1,
+      });
+    } catch (agentErr) {
+      const agentErrMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+      events.agentError({
+        leadId: lead.id,
+        messageId: payload.id,
+        errorType: 'agent_unavailable',
+        errorMessage: agentErrMsg,
+        fallbackTriggered: true,
+      });
+      const fallbackText =
+        'Hola, en este momento estoy procesando muchas consultas. Te respondo en unos segundos, ¡gracias por tu paciencia! 😊';
+      try {
+        await wppconnect.sendMessage(phone, fallbackText);
+      } catch {
+        // WPPConnect also unavailable — nothing more we can do. Log is already emitted.
+      }
+      return res.status(200).json({ status: 'agent_fallback', error: agentErrMsg });
+    }
 
     // 7. Persist outbound message
     const outboundWppId = `agent-${payload.id}`;

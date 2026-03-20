@@ -13,6 +13,7 @@ export async function backendFetch(
   const url = `${BACKEND_URL}${path}`;
   return fetch(url, {
     ...options,
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       'x-internal-key': INTERNAL_KEY,

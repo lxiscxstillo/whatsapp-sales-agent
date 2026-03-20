@@ -13,6 +13,9 @@ from ...prompts.slot_prompt import (
     SLOT_SYSTEM_PROMPT,
     SLOT_USER_TEMPLATE,
 )
+from ...utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 _extractor_llm = ChatGroq(
     model=settings.classifier_model,
@@ -22,9 +25,9 @@ _extractor_llm = ChatGroq(
 
 # Slot priority order (P1 first)
 SLOT_PRIORITY = [
+    "name",
     "property_type",
     "intent",
-    "name",
     "city",
     "budget",
     "bedrooms",
@@ -39,7 +42,25 @@ CONDITIONAL_SLOTS = {"bedrooms": ["casa", "apartamento"]}
 
 def get_next_slot_question(slots: dict) -> tuple[str, str]:
     """
-    Returns (slot_name, question_to_ask) for the next missing priority slot.
+    Return the next missing priority slot and its associated question.
+
+    Iterates through SLOT_PRIORITY (P1 → P4) and returns the first unfilled slot.
+    Conditional slots (e.g., 'bedrooms') are skipped when they are not applicable
+    to the lead's property_type.
+
+    Args:
+        slots: Dictionary of currently known slot values. A slot is considered
+               "filled" if its value is a non-empty, non-None string.
+
+    Returns:
+        Tuple of (slot_name, question_text). Returns ("", "") when all priority
+        slots are filled.
+
+    Priority levels:
+        P1: property_type, intent
+        P2: name, city, budget
+        P3: bedrooms (conditional), urgency
+        P4: zone, main_need
     """
     questions = {
         "property_type": "¿Qué tipo de inmueble estás buscando? ¿Casa, apartamento, lote, oficina o local?",
@@ -71,7 +92,42 @@ def get_next_slot_question(slots: dict) -> tuple[str, str]:
 
 
 def slot_check(state: AgentState) -> dict:
-    """Extract slots from latest message and update state."""
+    """
+    Extract and update lead slots from the most recent user message.
+
+    Calls the Groq LLM (llama-3.1-8b-instant) with structured output to identify
+    slot values present in the latest HumanMessage. Only non-null extracted values
+    overwrite existing slots (no partial erasure). Tracks slot contradictions when
+    a new value differs from the previously stored value.
+
+    Args:
+        state: AgentState containing:
+            - messages (list): Full conversation history. Only the last HumanMessage
+              is analyzed by this node.
+            - slots (dict): Currently known slot values from previous turns.
+
+    Returns:
+        dict with keys:
+            - slots (dict): Updated slot dictionary merging previous and newly
+              extracted values. Only non-None new values overwrite existing ones.
+            - contradicts_slot (str | None): Name of the slot that was overwritten
+              with a contradicting value, if any.
+        Returns {} (empty dict) on LLM extraction failure — preserving the current
+        slots unchanged in the graph state.
+
+    Behavior on failure:
+        If the LLM call raises any exception (timeout, validation error, API error),
+        logs the error at ERROR level and returns {} so the graph continues with
+        the existing slot state. The conversation is NOT interrupted.
+    """
+    logger.info(
+        "slot_check.start",
+        extra={
+            "node": "slot_check",
+            "current_slot_count": sum(1 for v in state.get("slots", {}).values() if v),
+        },
+    )
+
     messages = state.get("messages", [])
     current_slots = dict(state.get("slots", {}))
 
@@ -118,11 +174,26 @@ def slot_check(state: AgentState) -> dict:
                 objections.append(result.new_objection)
                 updated_slots["objections"] = objections
 
+        logger.info(
+            "slot_check.result",
+            extra={
+                "node": "slot_check",
+                "slots_updated": len(changed),
+                "changed_fields": list(changed.keys()),
+            },
+        )
+
         return {
             "slots": updated_slots,
             "contradicts_slot": result.contradicts_slot,
         }
 
-    except Exception:
-        # On extraction error, return current slots unchanged
+    except Exception as e:
+        # On extraction error, return current slots unchanged.
+        # Log the failure so it is visible in production logs.
+        logger.error(
+            "slot_check extraction failed — returning empty update",
+            exc_info=True,
+            extra={"node": "slot_check", "error": str(e)},
+        )
         return {}
