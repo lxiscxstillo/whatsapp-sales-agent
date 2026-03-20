@@ -108,15 +108,28 @@ async def _init_graph_with_retry(max_attempts: int = 5, base_delay: float = 3.0)
             await asyncio.sleep(delay)
 
 
+async def _keepalive_loop(pool):
+    """Ping Neon every 4 minutes to prevent scale-to-zero disconnection."""
+    while True:
+        await asyncio.sleep(240)
+        try:
+            async with pool.connection() as conn:
+                await conn.execute("SELECT 1")
+        except Exception as exc:
+            logger.warning("Keepalive ping failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize AsyncPostgresSaver with a connection pool and compile the graph on startup."""
     global _compiled_graph
 
     pool, _compiled_graph = await _init_graph_with_retry()
+    keepalive_task = asyncio.create_task(_keepalive_loop(pool))
     try:
         yield
     finally:
+        keepalive_task.cancel()
         await pool.close()
         logger.info("Agent shutting down")
 
