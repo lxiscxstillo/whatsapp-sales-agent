@@ -512,3 +512,110 @@ Reunión de integración: después de cada Phase
 - [ ] T109 Reescribir `dashboard/[leadId]/ReplyForm.tsx` (client): textarea mejorado, botón Send (indigo) + botón Handoff Humano (rojo prominente) con estados loading/done, `whileTap` framer-motion — `services/frontend/src/app/dashboard/[leadId]/ReplyForm.tsx`
 - [ ] T110 [P] Eliminar `components/LeadRow.tsx` obsoleto — reemplazado por `LeadCard.tsx` — `services/frontend/src/components/LeadRow.tsx`
 - [ ] T111 [P] Verificar build Next.js sin errores TypeScript (`npm run build`) y confirmar criterios de aceptación DS-1 a DS-7 de spec Sección 14
+
+---
+
+## Phase 10: ISO/IEC 25010 — Quality Hardening
+
+**Purpose**: Refactorización defensiva para cumplir con los 4 pilares de calidad ISO 25010 (Fiabilidad, Seguridad, Mantenibilidad, Capacidad de Interacción). Ninguna lógica de negocio es modificada — solo se envuelve el código existente con capas de seguridad, logging y validación.
+
+**Referencia**: `spec.md` Sección 15 — Estándares de Calidad ISO 25010.
+
+**Rama**: `refactor/iso25010-quality-hardening`
+
+**⚠️ REGLA DE ORO**: Solo envolver, nunca reemplazar. La lógica de calificación de leads y la conexión a WPPConnect NO se tocan. Verificar compilación y arranque correcto tras CADA tarea.
+
+---
+
+### Pilar 1 — Fiabilidad: Tolerancia a Fallos en Nodos LangGraph (PRIORIDAD ALTA 🔴)
+
+**Contexto**: `evaluate_lead.py` no tiene ningún try/except. `slot_check.py` y `generate_response.py` tienen `except Exception:` sin logging — falla silenciosa total en producción.
+
+- [X] T112 [P1] Envolver el cuerpo de `evaluate_lead` en `try/except Exception` en `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`: capturar, loguear con `logger.error("evaluate_lead failed", exc_info=True, extra={"node": "evaluate_lead"})`, retornar `{"interest_level": 1, "needs_handoff": False, "handoff_reason": None}`. La lógica de scoring interna NO cambia. — `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`
+
+- [X] T113 [P1] Reemplazar `except Exception: return {}` en `slot_check` con logging explícito en `services/agent-langgraph/src/graph/nodes/slot_check.py`: cambiar a `except Exception as e: logger.error("slot_check extraction failed", exc_info=True, extra={"node": "slot_check", "error": str(e)}); return {}`. El comportamiento de retorno `{}` se mantiene idéntico. — `services/agent-langgraph/src/graph/nodes/slot_check.py`
+
+- [X] T114 [P1] Mejorar el except en `generate_response` con logging y detección de timeout de Groq en `services/agent-langgraph/src/graph/nodes/generate_response.py`: (1) detectar `groq.APITimeoutError` y `httpx.TimeoutException` como primer except específico → retornar mensaje `"Estoy procesando mucha información en este momento, dame un momento por favor 🙏"`; (2) en el except genérico: loguear con `logger.error("generate_response failed", exc_info=True)` y retornar el fallback actual. Importar los tipos necesarios de `groq` y `httpx`. — `services/agent-langgraph/src/graph/nodes/generate_response.py`
+
+---
+
+### Pilar 1 — Fiabilidad: Graceful Degradation en Backend Node.js (PRIORIDAD ALTA 🔴)
+
+**Contexto**: Si `agentService.processMessage` lanza excepción en `webhook.route.ts`, se llama `next(err)` → respuesta 500 al webhook, pero el usuario de WhatsApp recibe silencio absoluto.
+
+- [X] T115 [P1] Añadir bloque catch específico para fallos del agente en `services/backend-api/src/routes/webhook.route.ts`: dentro del try/catch principal, detectar cuando `agentService.processMessage` falla capturando su error de forma específica (wrapping solo la llamada al agente en su propio try/catch interno), intentar enviar mensaje de fallback `"Hola, en este momento estoy procesando muchas consultas. Te respondo en unos segundos, ¡gracias por tu paciencia! 😊"` via `wppconnect.sendMessage()`, registrar evento `agent.error` vía `events.agentError()`, luego continuar sin relanzar (el webhook retorna 200 al WPPConnect para evitar reentregas). La lógica de orquestación principal NO cambia. — `services/backend-api/src/routes/webhook.route.ts`
+
+---
+
+### Pilar 2 — Seguridad: Sanitización Anti-Prompt-Injection (PRIORIDAD ALTA 🔴)
+
+**Contexto**: Los mensajes crudos de WhatsApp se insertan en el system prompt del LLM vía `{conversation_history}` sin ningún saneamiento. Un usuario malintencionado puede intentar sobreescribir las instrucciones del agente.
+
+- [X] T116 Crear función `sanitize_user_input(text: str) -> str` en un nuevo módulo `services/agent-langgraph/src/utils/sanitize.py`: la función elimina/neutraliza patrones de prompt injection conocidos usando regex (patrones: `r'\n\s*(system|sistema|instrucción|instruccion|instruction|ignore previous|ignora.*instrucciones|olvida.*instrucciones|you are now|ahora eres|pretend you|actúa como si fueras|act as if)[\s:]*'` con flag `re.IGNORECASE`), reemplaza las ocurrencias con `[mensaje]`, retorna el texto limpio. Agregar docstring completo explicando el propósito. — `services/agent-langgraph/src/utils/sanitize.py`
+
+- [X] T117 Aplicar `sanitize_user_input()` sobre el historial de conversación en `services/agent-langgraph/src/graph/nodes/generate_response.py`: en el loop de construcción de `history_lines` (líneas 33–39), al agregar mensajes `HumanMessage`, aplicar `sanitize_user_input(msg.content)` antes de usarlo en `history_lines` y como contenido de `HumanMessage` en `history_msgs`. Los mensajes `AIMessage` NO se sanitizan (son output del propio agente). — `services/agent-langgraph/src/graph/nodes/generate_response.py`
+
+---
+
+### Pilar 2 — Seguridad: Validación de Variables de Entorno en Python (PRIORIDAD MEDIA 🟡)
+
+**Contexto**: `config.py` usa Pydantic `BaseSettings` que valida en startup, pero el error que emite es un `ValidationError` genérico de Pydantic sin guía clara para el operador.
+
+- [X] T118 Añadir validación explícita con mensajes orientados al operador en `services/agent-langgraph/src/config.py`: después de `settings = Settings()`, agregar un bloque de validación post-inicialización que verifique las variables críticas (`groq_api_key`, `database_url`) y emita mensajes de error claros tipo `❌ Variable de entorno requerida: GROQ_API_KEY — obtener en https://console.groq.com → API Keys` antes de que la app falle en tiempo de ejecución. Envolver en try/except `ValidationError` del import de pydantic. — `services/agent-langgraph/src/config.py`
+
+---
+
+### Pilar 3 — Mantenibilidad: Logging Estructurado en Python (PRIORIDAD MEDIA 🟡)
+
+**Contexto**: El agente Python no tiene ningún sistema de logging. Los errores se pierden. Los agentes de IA auditores no pueden rastrear el comportamiento del sistema.
+
+- [X] T119 Crear módulo de logging estructurado en `services/agent-langgraph/src/utils/logger.py`: configurar el módulo `logging` estándar de Python con un `JSONFormatter` (clase que sobreescribe `format()` para emitir dicts serializados como JSON con campos: `event`, `level`, `timestamp`, `node`, `lead_id`, `message`). Crear función `get_logger(name: str) -> logging.Logger` que retorna un logger configurado. Nivel por defecto: `INFO`. Agregar docstring completo. — `services/agent-langgraph/src/utils/logger.py`
+
+- [X] T120 [P] Añadir logs estructurados en puntos clave de `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`: (1) `INFO` al inicio con `{"event": "evaluate_lead.start", "node": "evaluate_lead"}`, (2) `INFO` al finalizar con `{"event": "evaluate_lead.result", "interest_level": ..., "needs_handoff": ...}`, (3) `ERROR` en el except (de T112). Importar `get_logger` del módulo creado en T119. — `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`
+
+- [X] T121 [P] Añadir logs estructurados en puntos clave de `services/agent-langgraph/src/graph/nodes/slot_check.py`: (1) `INFO` al inicio con número de slots actuales, (2) `INFO` al finalizar con número de slots actualizados, (3) `ERROR` en el except (de T113). — `services/agent-langgraph/src/graph/nodes/slot_check.py`
+
+- [X] T122 [P] Añadir logs estructurados en puntos clave de `services/agent-langgraph/src/graph/nodes/generate_response.py`: (1) `INFO` al inicio con `lead_status`, (2) `INFO` al finalizar con longitud de respuesta generada, (3) `WARNING` cuando se activa fallback de timeout Groq, (4) `ERROR` cuando se activa fallback genérico (de T114). — `services/agent-langgraph/src/graph/nodes/generate_response.py`
+
+---
+
+### Pilar 3 — Mantenibilidad: Docstrings Completos (PRIORIDAD MEDIA 🟡)
+
+**Contexto**: Los agentes de IA auditores leerán el código. Las funciones críticas necesitan docstrings que expliquen input, output y comportamiento de fallo.
+
+- [X] T123 [P] Enriquecer docstring de `evaluate_lead()` en `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`: documentar en formato Google Style o NumPy: args (`state: AgentState` con descripción de campos usados: `slots`, `last_intent`), returns (dict con `interest_level`, `needs_handoff`, `handoff_reason` y tipos), raises (None — excepciones son capturadas internamente), behavior on failure (retorna `{interest_level: 1, needs_handoff: False}`). — `services/agent-langgraph/src/graph/nodes/evaluate_lead.py`
+
+- [X] T124 [P] Enriquecer docstring de `slot_check()` en `services/agent-langgraph/src/graph/nodes/slot_check.py`: documentar args, returns (`dict` con `slots` actualizado y `contradicts_slot`), behavior on LLM failure (`return {}` — slots sin cambios). Añadir docstring también a `get_next_slot_question()` con descripción del sistema de prioridades P1/P2/P3/P4. — `services/agent-langgraph/src/graph/nodes/slot_check.py`
+
+- [X] T125 [P] Enriquecer docstring de `generate_response()` en `services/agent-langgraph/src/graph/nodes/generate_response.py`: documentar args, returns (`dict` con `messages: [AIMessage]`), comportamiento en timeout de Groq (mensaje de espera), comportamiento en error genérico (mensaje de disculpa). — `services/agent-langgraph/src/graph/nodes/generate_response.py`
+
+---
+
+### Pilar 4 — Capacidad de Interacción: Validación de Payloads en Frontend (PRIORIDAD MEDIA 🟡)
+
+**Contexto**: Los Route Handlers de Next.js reenvían payloads al backend sin validación. Un ID vacío genera paths rotos. Un body nulo crashea el endpoint.
+
+- [X] T126 Añadir validación de `params.id` en los Route Handlers del frontend: en `services/frontend/src/app/api/leads/[id]/route.ts`, `services/frontend/src/app/api/leads/[id]/messages/route.ts` y `services/frontend/src/app/api/leads/[id]/handoff/route.ts`, agregar al inicio de cada handler función una validación: `if (!params.id || params.id.trim().length === 0) return NextResponse.json({ error: 'ID de lead inválido' }, { status: 400 })`. No modificar la lógica de forwarding existente. — 3 archivos afectados en `services/frontend/src/app/api/leads/[id]/`
+
+- [X] T127 Añadir validación de cuerpo del mensaje en `services/frontend/src/app/api/leads/[id]/messages/route.ts`: en el handler `POST`, después de `await req.json()`, validar que el campo `body` existe y no es string vacío: `if (!body?.body || typeof body.body !== 'string' || !body.body.trim()) return NextResponse.json({ error: 'El campo body es requerido y no puede estar vacío' }, { status: 400 })`. No modificar el forwarding al backend ni la lógica existente. — `services/frontend/src/app/api/leads/[id]/messages/route.ts`
+
+---
+
+### Merge y Verificación de Phase 10
+
+- [X] T128 Verificar que el agente Python sigue arrancando correctamente tras todos los cambios: `docker compose up agent-langgraph` sin errores de import, el endpoint `POST /agent/process` responde (puede retornar error de DB/grafo si no hay postgres, pero NO debe fallar en el import de los módulos nuevos).
+- [X] T129 [P] Verificar que el frontend compila sin errores TypeScript: `cd services/frontend && npm run build` — 0 errores de tipos en los route handlers modificados.
+- [ ] T130 Crear PR de `refactor/iso25010-quality-hardening` → `develop` con descripción: `"refactor(quality): ISO 25010 hardening — fault tolerance, logging, input sanitization, payload validation"`. Verificar que el diff NO incluye cambios a lógica de negocio (scoring, slots, handoff conditions).
+
+---
+
+## Resumen Phase 10
+
+| Pilar ISO 25010 | Tareas | Archivos afectados |
+|---|---|---|
+| Fiabilidad | T112–T115 (4 tareas) | `evaluate_lead.py`, `slot_check.py`, `generate_response.py`, `webhook.route.ts` |
+| Seguridad | T116–T118 (3 tareas) | nuevo `sanitize.py`, `generate_response.py`, `config.py` |
+| Mantenibilidad | T119–T125 (7 tareas) | nuevo `logger.py`, 3 nodos Python |
+| Capacidad de Interacción | T126–T127 (2 tareas) | 3 route handlers Next.js |
+| Verificación | T128–T130 (3 tareas) | Build check + PR |
+| **Total Phase 10** | **19 tareas** | **10 archivos** |
