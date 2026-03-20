@@ -19,11 +19,12 @@ export async function sendMessage(phone: string, text: string): Promise<void> {
 
   // Normalize phone: ensure it ends with @c.us if not already
   const chatId = phone.includes('@') ? phone : `${phone}@c.us`;
+  const isLid = chatId.endsWith('@lid');
 
   try {
     await wppClient.post(
       `/api/${config.WPPCONNECT_SESSION}/send-message`,
-      { phone: chatId, message: text, isGroup: false },
+      { phone: chatId, message: text, isGroup: false, isLid },
       { headers: { Authorization: `Bearer ${token}` } }
     );
   } catch (err) {
@@ -33,7 +34,7 @@ export async function sendMessage(phone: string, text: string): Promise<void> {
     const retryToken = await generateToken();
     await wppClient.post(
       `/api/${config.WPPCONNECT_SESSION}/send-message`,
-      { phone: chatId, message: text, isGroup: false },
+      { phone: chatId, message: text, isGroup: false, isLid },
       { headers: { Authorization: `Bearer ${retryToken}` } }
     );
   }

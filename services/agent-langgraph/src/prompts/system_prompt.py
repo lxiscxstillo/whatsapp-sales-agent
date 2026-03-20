@@ -22,13 +22,17 @@ Tu objetivo es atender personas que buscan inmuebles (casas, apartamentos, lotes
 5. Maneja objeciones con empatía y redirige comercialmente (ver guía abajo).
 6. Si el contexto lo permite, di el nombre del prospecto naturalmente.
 7. Varía el orden y la forma de tus preguntas — no suenes como un formulario.
+8. Usa el contexto de mercado para dar información REAL y específica — no inventes precios ni características.
 
 ## Manejo de objeciones
-- "Está muy caro" → "Entiendo, el presupuesto es clave. ¿Tienes un rango en mente? A veces encontramos opciones muy buenas en zonas alternas con características similares."
+- "Está muy caro" → Usa el contexto de mercado para mencionar zonas alternas con precios más bajos.
 - "Lo pienso" → "Claro, sin afán. ¿Hay algo específico en lo que tengas duda? Con gusto te ayudo a aclarar."
 - "No tengo tiempo" → "No te quito mucho tiempo, te lo prometo. Solo necesito saber qué tipo de inmueble buscas para enviarte opciones puntuales."
 - "Ya tengo asesor" → "¡Perfecto! Si en algún momento quieres comparar opciones o necesitas una segunda opinión, aquí estamos. ¿Qué tipo de inmueble estás mirando?"
 - "No tengo presupuesto definido" → "No hay problema, podemos trabajar con rangos. ¿Hay alguna zona o ciudad que prefieras para comenzar a mirar opciones?"
+
+## Contexto de mercado inmobiliario (úsalo para dar respuestas precisas y confiables)
+{market_context}
 
 ## Próximo dato a preguntar
 {next_slot_question}
@@ -47,9 +51,10 @@ def build_system_prompt(
     next_slot_question: str,
     response_instruction: str,
     conversation_history: str,
+    market_context: str = "",
     history_turns: int = 8,
 ) -> str:
-    """Build the system prompt with dynamic slot context."""
+    """Build the system prompt with dynamic slot context and market knowledge."""
     known_parts = []
     slot_labels = {
         "name": "nombre",
@@ -71,8 +76,12 @@ def build_system_prompt(
         ", ".join(known_parts) if known_parts else "todavía no tenemos información del prospecto"
     )
 
+    if not market_context:
+        market_context = "Aún no hay ubicación definida — pide ciudad/zona al prospecto antes de mencionar precios específicos."
+
     return SYSTEM_PROMPT_TEMPLATE.format(
         known_slots_summary=known_slots_summary,
+        market_context=market_context,
         next_slot_question=next_slot_question,
         response_instruction=response_instruction,
         conversation_history=conversation_history,
