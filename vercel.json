@@ -1,9 +1,9 @@
 {
   "framework": "nextjs",
-  "buildCommand": "cd services/frontend && npm run build",
-  "outputDirectory": "services/frontend/.next",
-  "installCommand": "cd services/frontend && npm ci",
-  "devCommand": "cd services/frontend && npm run dev",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "installCommand": "npm ci",
+  "devCommand": "npm run dev",
   "env": {
     "BACKEND_API_URL": "@backend_api_url",
     "INTERNAL_API_KEY": "@internal_api_key",

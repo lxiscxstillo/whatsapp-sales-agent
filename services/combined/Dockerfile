@@ -48,7 +48,7 @@ WORKDIR /app
 
 COPY services/combined/supervisord.conf /etc/supervisord.conf
 COPY services/backend-api/entrypoint.sh /app/backend/entrypoint.sh
-RUN chmod +x /app/backend/entrypoint.sh
+RUN sed -i 's/\r$//' /app/backend/entrypoint.sh && chmod +x /app/backend/entrypoint.sh
 
 EXPOSE 3001 8000
 
