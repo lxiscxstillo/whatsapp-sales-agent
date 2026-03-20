@@ -14,12 +14,13 @@ import {
   FileText,
 } from 'lucide-react';
 import { StatusBadge } from '@/components/StatusBadge';
+import { LeadInsights } from '@/components/LeadInsights';
 import ConversationClient from './ConversationClient';
 import ReplyForm from './ReplyForm';
 
 async function getLead(id: string): Promise<Lead | null> {
   try {
-    const res = await backendFetch(`/api/v1/leads/${id}`);
+    const res = await backendFetch(`/leads/${id}`);
     if (!res.ok) return null;
     const data = await res.json();
     return data.data;
@@ -39,6 +40,32 @@ const SLOT_CONFIG = [
   { key: 'mainNeed', label: 'Prioridad', Icon: Target },
 ] as const;
 
+function InterestBar({ level }: { level: number }) {
+  const labels = ['', 'Muy bajo', 'Bajo', 'Moderado', 'Alto', 'Máximo'];
+  const colors = ['', 'bg-slate-300', 'bg-blue-300', 'bg-amber-400', 'bg-orange-400', 'bg-red-500'];
+
+  return (
+    <div className="p-5 border-b border-slate-100">
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+        Nivel de interés
+      </p>
+      <div className="flex gap-1 mb-2">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className={`h-2 flex-1 rounded-full transition-all ${
+              i < level ? (colors[level] || 'bg-amber-400') : 'bg-slate-100'
+            }`}
+          />
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 font-medium">
+        {level}/5 — {labels[level] || 'Sin datos'}
+      </p>
+    </div>
+  );
+}
+
 export default async function LeadDetailPage({ params }: { params: { leadId: string } }) {
   const lead = await getLead(params.leadId);
   if (!lead) notFound();
@@ -47,6 +74,8 @@ export default async function LeadDetailPage({ params }: { params: { leadId: str
   const filledSlots = SLOT_CONFIG.filter(
     (s) => lead.slots[s.key as keyof typeof lead.slots]
   );
+
+  const displayName = lead.slots.name || lead.phone;
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
@@ -61,7 +90,7 @@ export default async function LeadDetailPage({ params }: { params: { leadId: str
 
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-slate-900 truncate leading-tight">
-            {lead.slots.name || lead.phone}
+            {displayName}
           </h2>
           <p className="text-xs text-slate-400 font-mono">{lead.phone}</p>
         </div>
@@ -74,32 +103,18 @@ export default async function LeadDetailPage({ params }: { params: { leadId: str
         {/* Conversation column */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <ConversationClient leadId={params.leadId} />
-          <ReplyForm leadId={params.leadId} isHandoff={lead.status === 'HANDOFF'} />
+          <ReplyForm leadId={params.leadId} status={lead.status} />
         </div>
 
         {/* Right info panel — desktop only */}
         <aside className="hidden lg:flex w-72 flex-col flex-shrink-0 bg-white border-l border-slate-200 overflow-y-auto scrollbar-thin">
           {/* Interest bar */}
-          <div className="p-5 border-b border-slate-100">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-              Nivel de interés
-            </p>
-            <div className="flex gap-1 mb-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`h-2 flex-1 rounded-full transition-colors ${
-                    i < interestLevel ? 'bg-amber-400' : 'bg-slate-100'
-                  }`}
-                />
-              ))}
-            </div>
-            <p className="text-xs text-slate-400">
-              {interestLevel}/5 — {interestLevel >= 4 ? 'Muy interesado' : interestLevel >= 2 ? 'Interés moderado' : 'Interés bajo'}
-            </p>
-          </div>
+          <InterestBar level={interestLevel} />
 
-          {/* Slots */}
+          {/* Lead Insights — AI-generated bullets */}
+          <LeadInsights lead={lead} />
+
+          {/* Slots / Profile */}
           {filledSlots.length > 0 && (
             <div className="p-5 border-b border-slate-100">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">
@@ -154,15 +169,15 @@ export default async function LeadDetailPage({ params }: { params: { leadId: str
             </div>
           )}
 
-          {/* Empty info state */}
+          {/* Empty state */}
           {filledSlots.length === 0 && !lead.handoffReason && !lead.agentNotes && (
-            <div className="p-5 flex flex-col items-center justify-center text-center py-12">
+            <div className="p-5 flex flex-col items-center justify-center text-center py-10">
               <div className="w-10 h-10 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center mb-3">
                 <span className="text-lg">📋</span>
               </div>
               <p className="text-xs text-slate-400 font-medium">Sin datos aún</p>
               <p className="text-xs text-slate-300 mt-1">
-                El agente irá llenando el perfil del lead durante la conversación.
+                El agente irá llenando el perfil durante la conversación.
               </p>
             </div>
           )}

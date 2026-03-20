@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import useSWR from 'swr';
 import {
   Building2,
   Flame,
@@ -16,6 +17,9 @@ import {
   X,
   BarChart3,
 } from 'lucide-react';
+import type { Lead, PaginatedResponse } from '@/types/lead';
+
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 const STATUS_CONFIG = [
   { key: 'NEW', label: 'Nuevos', icon: Sparkles, color: 'text-violet-400', dot: 'bg-violet-400', pulse: false },
@@ -27,10 +31,27 @@ const STATUS_CONFIG = [
 ];
 
 interface Props {
-  counts: Record<string, number>;
+  counts?: Record<string, number>;
 }
 
-function SidebarContent({ counts, onClose }: Props & { onClose?: () => void }) {
+function useLiveCounts(initial?: Record<string, number>) {
+  const { data } = useSWR<PaginatedResponse<Lead>>(
+    '/api/leads?limit=200',
+    fetcher,
+    { refreshInterval: 5000, fallbackData: undefined }
+  );
+
+  if (!data?.data) return initial ?? {};
+  const leads = data.data;
+  const counts: Record<string, number> = { _total: leads.length };
+  for (const lead of leads) {
+    counts[lead.status] = (counts[lead.status] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function SidebarContent({ counts: initialCounts, onClose }: Props & { onClose?: () => void }) {
+  const counts = useLiveCounts(initialCounts);
   const pathname = usePathname();
 
   return (
