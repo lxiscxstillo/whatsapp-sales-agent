@@ -254,5 +254,160 @@ WhatsApp User
 
 ---
 
+## 7. Evolución v2 — Sales Closer Engine (21 de marzo de 2026)
+
+> **Rama:** `feature/sales-closer-engine-v2`
+> **Estado:** ✅ Desplegado y Operacional en Producción
+> **Motivación:** Evolucionar el agente de captación pasiva a un Motor de Cierre de Ventas con conocimiento hiper-local, persuasión comercial y cumplimiento estricto de ISO 25010.
+
+### 7.1 Mock-RAG — Inventario de Propiedades en Memoria
+
+**Problema resuelto:** El agente v1 generaba datos de mercado genéricos desde `real_estate_kb.py` (77KB de texto). En v2 cita propiedades reales (simuladas) con ID, precio, m² y argumento de venta único.
+
+**Implementación:**
+
+- `data/inventory_colombia.json` — 15 inmuebles con ID, tipo, ciudad, barrio, precio COP, m², habitaciones, baños, amenidades y `unique_selling_argument`.
+- `services/agent-langgraph/src/tools/inventory_service.py` — `InventoryService` carga el JSON una vez en startup (cero latencia por solicitud). `query()` filtra por ciudad, zona, presupuesto y tipo. Fallback a `[]` si el archivo falla (ISO 25010 — Fault Tolerance).
+- `services/agent-langgraph/data/inventory_colombia.json` — copia dentro del contexto Docker del agente.
+- `services/agent-langgraph/Dockerfile` — añadido `COPY data ./data` para incluir el inventario en la imagen.
+
+**Cobertura del inventario:**
+
+| Ciudad | Barrios |
+|--------|---------|
+| Pasto (Nariño) | Palermo, Maridíaz, Av. Panamericana, Tamasagra, Anganoy, El Prado, San Ignacio |
+| Bogotá | Chicó, Cedritos |
+| Medellín | El Poblado, Laureles |
+| Cali | Pance |
+
+**Bug resuelto en producción:** `Path(__file__).parent.parent.parent.parent` (4 niveles) resolvía a `/` dentro del container Docker (`/app/src/main.py`). Corregido a `.parent.parent` → `/app/data/inventory_colombia.json`.
+
+### 7.2 Motor de Cierre con CTA Dinámico
+
+**Problema resuelto:** El agente v1 terminaba respuestas con preguntas abiertas. En v2 todo lead tibio/caliente recibe una propuesta de cierre concreta (visita, videollamada, agenda).
+
+**Implementación:**
+
+- `services/agent-langgraph/src/graph/nodes/generate_response.py` — función `_compute_cta_instruction()`: calcula el CTA según `interest_level × last_intent × has_city × needs_handoff`.
+- `services/agent-langgraph/src/prompts/system_prompt.py` — nuevas variables de plantilla `{inventory_properties}`, `{inventory_alternative}`, `{cta_instruction}` inyectadas al sistema prompt.
+- **Lógica CTA por nivel:**
+
+| Nivel | Condición | CTA |
+|-------|-----------|-----|
+| Frío (1-2) | `interest_level < 3` | Solo pregunta de descubrimiento — sin propuesta de visita |
+| Consideración (3) | `interest_level >= 3 && has_city` | "¿Le parece si agendamos una visita para el jueves?" |
+| Alto interés (4-5) | `interest_level >= 4` o `last_intent=HIGH_INTEREST` | Urgencia positiva: "Las unidades se están moviendo rápido…" |
+| Objeción de precio | `last_intent=OBJECTION` | Presenta alternativa de barrio adyacente + propuesta de visita |
+
+### 7.3 Manejo de Objeciones por Zona Adyacente
+
+**Problema resuelto:** Si el lead objeta el precio en Palermo, el agente ofrecía respuestas genéricas. En v2 consulta el inventario de zonas vecinas y propone un inmueble concreto más económico.
+
+**Implementación:**
+
+- `services/agent-langgraph/src/tools/inventory_service.py` — diccionario `ADJACENT_ZONES` hardcodeado (no LLM) para prevenir alucinaciones geográficas:
+  - Pasto: Palermo ↔ Maridíaz ↔ El Prado ↔ San Ignacio ↔ Anganoy ↔ Tamasagra
+  - Bogotá: Chicó ↔ Cedritos; Medellín: El Poblado ↔ Laureles; Cali: Pance ↔ Ciudad Jardín
+- `_price_objection_detected()` — lista de keywords (`caro`, `costoso`, `no me alcanza`, `más barato`…) para activar búsqueda de alternativas sin llamada adicional al LLM.
+- `inventory.query(include_alternatives=True)` — busca en zonas adyacentes con `budget_max * 0.95` y retorna hasta 2 alternativas.
+
+### 7.4 Nuevos Slots de Lead — Barrio y Nivel de Urgencia
+
+**Problema resuelto:** El backend v1 no persistía el barrio preferido ni la urgencia normalizada, impidiendo priorización en el CRM.
+
+**Implementación:**
+
+- `services/backend-api/prisma/schema.prisma` — dos columnas nuevas en modelo `Lead`:
+  - `slotNeighborhood String?` — barrio preferido extraído por el agente (ej: "Palermo")
+  - `urgencyLevel String?` — urgencia normalizada: `"inmediata"` | `"1-3_meses"` | `"3-6_meses"` | `"mas_de_6_meses"` | `"no_definida"`
+- `services/backend-api/prisma/migrations/20260321000000_add_lead_neighborhood_urgency/migration.sql` — migración `ADD COLUMN` no destructiva, aplicada en Neon PostgreSQL sin downtime.
+- `services/backend-api/src/services/lead.service.ts` — `syncSlotsFromAgent()` extendido para persistir ambos campos.
+- `services/backend-api/src/routes/webhook.route.ts` — `currentSlots` extendido con `preferred_neighborhood` y `urgency_level` para portarlos entre turnos.
+- `services/agent-langgraph/src/graph/state.py` — `LeadSlots` y `default_slots()` actualizados con `preferred_neighborhood` y `urgency_level`.
+- `services/agent-langgraph/src/graph/nodes/evaluate_lead.py` — función `normalize_urgency_level()` con `URGENCY_PATTERNS` que mapea texto libre a los 5 valores canónicos.
+- `services/agent-langgraph/src/prompts/slot_prompt.py` — campo `preferred_neighborhood` en `SlotExtraction` con instrucciones de barrios por ciudad colombiana.
+
+### 7.5 Persona Comercial Colombiana ("Valentina")
+
+**Problema resuelto:** El agente v1 usaba un tono neutral y genérico. En v2 proyecta autoridad inmobiliaria con modismos profesionales colombianos.
+
+**Cambios en `services/agent-langgraph/src/prompts/system_prompt.py`:**
+- Vocabulario: "Con mucho gusto", "Sector de alta valorización", "Las unidades se están moviendo rápido"
+- Instrucción explícita: cada respuesta debe cerrar con un CTA o una pregunta de descubrimiento
+- Las propiedades del inventario se citan con ID (`PST-001`), precio y argumento de venta textual
+
+### 7.6 Bug Crítico Resuelto — RunnableConfig en LangGraph
+
+**Síntoma:** `inventory_injected: false` en todos los logs de producción a pesar de que el archivo JSON estaba presente y accesible en el container.
+
+**Causa raíz:** LangGraph inspecciona la firma del nodo para decidir si inyectar la configuración. El parámetro `config: dict | None = None` hacía que LangGraph omitiera la inyección silenciosamente → `config` siempre llegaba como `None` → `inventory` nunca se extraía del configurable.
+
+**Fix:** `services/agent-langgraph/src/graph/nodes/generate_response.py`
+```python
+# Antes (incorrecto — LangGraph no inyecta config)
+def generate_response(state: AgentState, config: dict | None = None) -> dict:
+
+# Después (correcto — LangGraph reconoce RunnableConfig y lo inyecta)
+from langchain_core.runnables import RunnableConfig
+def generate_response(state: AgentState, config: RunnableConfig | None = None) -> dict:
+```
+
+**Verificación en producción:**
+```json
+{"event": "generate_response.success", ..., "inventory_injected": true, "total_matches": 1}
+```
+
+### 7.7 Arquitectura Actualizada — v2
+
+```
+WhatsApp User
+     │ mensaje
+     ▼
+┌─────────────────────────────┐
+│  WPPConnect (Fly.io, 1GB)   │
+└────────────┬────────────────┘
+             │ POST webhook
+             ▼
+┌────────────────────────────────────┐
+│  Backend API (Fly.io, 256MB)       │
+│  15-step pipeline + v2 slots       │
+│  slotNeighborhood + urgencyLevel   │
+│  sincronizados en Neon PostgreSQL  │
+└──────┬─────────────────────────────┘
+       │ POST /agent/process (slots v2)
+       ▼
+┌───────────────────────────────────────────┐
+│ Python Agent — Sales Closer Engine v2     │
+│ (Fly.io, 256MB)                           │
+│                                           │
+│  receive_message → detect_intent          │
+│  → slot_check (12 campos)                 │
+│  → evaluate_lead (urgency_level norm.)    │
+│  → generate_response                      │
+│     ├── InventoryService.query()          │
+│     │   └── /app/data/inventory_colombia  │
+│     │       (15 props, in-memory, ~15KB)  │
+│     ├── ADJACENT_ZONES (objection hdl)    │
+│     ├── CTA dinámico por nivel interés    │
+│     └── Persona "Valentina" colombiana    │
+└───────────────────────────────────────────┘
+```
+
+### 7.8 Commits de la Evolución v2
+
+| Commit | Descripción |
+|--------|-------------|
+| `feat(data): add inventory_colombia.json` | 15 propiedades simuladas (Pasto, Bogotá, Medellín, Cali) |
+| `feat(agent): implement InventoryService + ADJACENT_ZONES` | Mock-RAG en memoria con fallback gracioso |
+| `feat(agent): upgrade generate_response to Sales Closer Engine v2` | CTA dinámico, inyección de inventario, manejo de objeciones |
+| `feat(agent): add preferred_neighborhood + urgency_level to LeadSlots` | Nuevos slots en state, slot_check, evaluate_lead |
+| `feat(db): add slotNeighborhood + urgencyLevel migration` | ADD COLUMN sin downtime en Neon PostgreSQL |
+| `feat(backend): persist v2 slots in lead.service + webhook` | syncSlotsFromAgent + currentSlots extendidos |
+| `fix(agent): resolve inventory path + copy data into Docker build context` | Path `.parent×4` → `.parent×2`, COPY data en Dockerfile |
+| `fix(agent): use RunnableConfig type so LangGraph injects config` | Bug crítico — config nunca llegaba al nodo, inventario siempre None |
+
+---
+
 *Informe generado automáticamente desde análisis del repositorio y del sistema en producción.*
 *Todos los servicios verificados como operacionales al momento de la entrega: 20/03/2026.*
+*Sales Closer Engine v2 verificado como operacional: 21/03/2026 — `inventory_injected: true` confirmado en logs de Fly.io.*
