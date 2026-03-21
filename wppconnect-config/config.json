@@ -29,6 +29,8 @@
     "onParticipantsChanged": false,
     "onReactionMessage": false,
     "onPollResponse": false,
-    "onRevokedMessage": false
+    "onRevokedMessage": false,
+    "onStatusChange": true,
+    "onQRCode": true
   }
 }

@@ -3,6 +3,7 @@ import axios, { AxiosError } from 'axios';
 import { config } from '../config';
 import logger from '../utils/logger';
 import * as wppconnect from '../services/wppconnect.service';
+import { getQrCode, clearQrCode } from '../utils/qr-store';
 
 export const authRouter = Router();
 
@@ -71,8 +72,14 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
         { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
       );
 
-      const status: string = data.status ?? 'unknown';
-      const qrcode: string | null = data.qrcode ?? null;
+      const rawStatus: string = data.status ?? 'unknown';
+      // WPPConnect v2.8.x stays at INITIALIZING while QR is pending — fall back
+      // to the stored QR from the onQRCode webhook event if available.
+      const apiQrcode: string | null = data.qrcode ?? null;
+      const storedQr = rawStatus === 'isLogged' ? null : getQrCode();
+      const qrcode = apiQrcode ?? storedQr;
+      // Normalise status: treat INITIALIZING-with-QR as QRCODE
+      const status = rawStatus === 'INITIALIZING' && qrcode ? 'QRCODE' : rawStatus;
       const connected = status === 'isLogged';
       const connectionState = toConnectionState(status, qrcode !== null);
 
@@ -117,6 +124,9 @@ authRouter.post('/start-session', async (_req: Request, res: Response) => {
 
   try {
     const token = await getCachedToken();
+
+    // Clear any stale QR from a previous session cycle
+    clearQrCode();
 
     // 1. Close existing session (ignore errors — it may already be closed)
     try {

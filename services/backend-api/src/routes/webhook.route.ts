@@ -4,7 +4,8 @@ import * as leadService from '../services/lead.service';
 import * as messageService from '../services/message.service';
 import * as agentService from '../services/agent.service';
 import * as wppconnect from '../services/wppconnect.service';
-import { events } from '../utils/logger';
+import logger, { events } from '../utils/logger';
+import { setQrCode, clearQrCode } from '../utils/qr-store';
 
 export const webhookRouter = Router();
 
@@ -29,9 +30,41 @@ const WebhookPayloadSchema = z.object({
 // connected by definition — no additional connection status check is needed.
 
 webhookRouter.post('/message', async (req: Request, res: Response, next: NextFunction) => {
-  // Filter non-message events (onack, onpresencechanged, etc.)
-  if (req.body?.event && req.body.event !== 'onmessage') {
-    return res.status(200).json({ ignored: req.body.event });
+  const event: string | undefined = req.body?.event;
+
+  // Log every non-message event at debug level so we can see what WPPConnect sends
+  if (event && event !== 'onmessage') {
+    logger.info({ event: 'wpp_webhook_received', wppEvent: event, keys: Object.keys(req.body) });
+  }
+
+  // ── QR code event ────────────────────────────────────────────────────────────
+  // WPPConnect v2.8.x fires `onQRCode` when a new QR is generated.
+  // `status-session` stays at INITIALIZING during this window, so we capture
+  // the QR here and serve it from qr-store in GET /api/v1/auth/qr.
+  if (event === 'onQRCode') {
+    // Payload shapes observed in v2.8.x:
+    //   { event: 'onQRCode', data: '<qr_string>' }
+    //   { event: 'onQRCode', data: { code: '<qr_string>' } }
+    //   { event: 'onQRCode', qrCode: '<qr_string>' }
+    const raw = req.body?.data ?? req.body?.qrCode ?? req.body?.qrcode ?? null;
+    const qr: string | null =
+      typeof raw === 'string' ? raw
+      : typeof raw?.code === 'string' ? raw.code
+      : null;
+    if (qr) setQrCode(qr);
+    return res.status(200).json({ captured: 'onQRCode' });
+  }
+
+  // ── Session connected — clear stale QR ──────────────────────────────────────
+  if (event === 'onStateChange' || event === 'statusFind') {
+    const status: string | undefined = req.body?.data ?? req.body?.status;
+    if (status === 'isLogged' || status === 'CONNECTED') clearQrCode();
+    return res.status(200).json({ captured: event, status });
+  }
+
+  // Filter other non-message events (onack, onpresencechanged, etc.)
+  if (event && event !== 'onmessage') {
+    return res.status(200).json({ ignored: event });
   }
 
   // Parse and validate payload
