@@ -7,22 +7,26 @@
 
 import express from 'express';
 import { config } from './config';
+import { corsMiddleware } from './middleware/cors.middleware';
 import { authMiddleware } from './middleware/auth.middleware';
 import { errorMiddleware } from './middleware/error.middleware';
 import { webhookRouter } from './routes/webhook.route';
 import { leadsRouter } from './routes/leads.route';
 import { handoffRouter } from './routes/handoff.route';
+import { authRouter } from './routes/auth.route';
 import { prisma } from './services/prisma.client';
 import logger from './utils/logger';
 
 const app = express();
 
-// ── Health check (public — before authMiddleware so Railway can probe it) ─────
+// ── Health check (public — before authMiddleware so probes can reach it) ──────
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0', timestamp: new Date().toISOString() });
 });
+app.head('/health', (_req, res) => res.sendStatus(200));
 
 // ── Middleware ────────────────────────────────────────────────────────────────
+app.use(corsMiddleware);
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware);
 
@@ -30,6 +34,7 @@ app.use(authMiddleware);
 app.use('/api/v1/webhook', webhookRouter);
 app.use('/api/v1/leads', leadsRouter);
 app.use('/api/v1/leads', handoffRouter);
+app.use('/api/v1/auth', authRouter);
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorMiddleware);

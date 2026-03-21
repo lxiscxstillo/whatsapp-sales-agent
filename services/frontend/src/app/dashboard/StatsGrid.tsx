@@ -10,7 +10,7 @@ export default function StatsGrid() {
   const { data } = useSWR<PaginatedResponse<Lead>>(
     '/api/leads?limit=200',
     fetcher,
-    { refreshInterval: 5000 }
+    { refreshInterval: 2500 }
   );
 
   const leads = data?.data ?? [];

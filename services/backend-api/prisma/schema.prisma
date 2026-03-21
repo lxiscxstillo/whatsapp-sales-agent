@@ -3,6 +3,11 @@ generator client {
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
+// DATABASE_URL must use the Neon POOLER endpoint for runtime (not direct):
+//   postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/dbname
+//   ?sslmode=require&pgbouncer=true&connection_limit=5&pool_timeout=0
+// Use the DIRECT endpoint only for `prisma migrate deploy`.
+// binaryTargets includes linux-musl-openssl-3.0.x for Fly.io Alpine containers.
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
