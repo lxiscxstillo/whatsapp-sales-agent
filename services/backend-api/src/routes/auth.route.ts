@@ -115,9 +115,12 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
 });
 
 // ── POST /api/v1/auth/start-session ──────────────────────────────────────────
-// Closes the existing WPPConnect session and starts a fresh one (new QR cycle).
-// The frontend calls this through the Vercel proxy — never directly — to avoid
-// Vercel's 10s serverless timeout on cold WPPConnect starts.
+// Logs out and starts a completely fresh WPPConnect session (new QR cycle).
+// Using logout-session (not close-session) deletes the saved token files so
+// WPPConnect always starts from scratch — this is required for the onQRCode
+// webhook to fire reliably. With saved (expired) tokens, WPPConnect takes a
+// different code path that does not emit the qrcode webhook event.
+// The frontend calls this through the Vercel proxy to avoid Vercel's 10s limit.
 
 authRouter.post('/start-session', async (_req: Request, res: Response) => {
   const session = config.WPPCONNECT_SESSION;
@@ -128,21 +131,23 @@ authRouter.post('/start-session', async (_req: Request, res: Response) => {
     // Clear any stale QR from a previous session cycle
     clearQrCode();
 
-    // 1. Close existing session (ignore errors — it may already be closed)
+    // 1. Logout existing session — removes saved token files from disk so the
+    //    next start-session goes through the fresh QR path (fires onQRCode webhook).
+    //    Ignore errors — session may not exist yet or may already be logged out.
     try {
       await axios.post(
-        `${config.WPPCONNECT_URL}/api/${session}/close-session`,
+        `${config.WPPCONNECT_URL}/api/${session}/logout-session`,
         {},
         { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
       );
     } catch {
-      // Intentionally ignored — session may not exist yet
+      // Intentionally ignored
     }
 
-    // 2. Brief pause before starting fresh
-    await new Promise((r) => setTimeout(r, 1500));
+    // 2. Brief pause so WPPConnect can finish cleanup before starting fresh
+    await new Promise((r) => setTimeout(r, 2000));
 
-    // 3. Start new session (generates a fresh QR)
+    // 3. Start new session (generates a fresh QR, fires qrcode webhook)
     // WPPConnect v2.x: start-session does NOT use secretKey in path — auth is via Bearer token
     await axios.post(
       `${config.WPPCONNECT_URL}/api/${session}/start-session`,
