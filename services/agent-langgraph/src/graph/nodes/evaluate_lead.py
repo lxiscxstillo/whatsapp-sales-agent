@@ -1,6 +1,12 @@
 """
-evaluate_lead node — calculates interest_level and determines if handoff is needed.
-Interest level 1-5 based on slot completeness and intent signals.
+evaluate_lead node — calculates interest_level, determines handoff, and normalizes urgency_level.
+
+Sales Closer Engine v2 additions:
+    - normalize_urgency_level(): converts raw urgency text to a structured enum value
+      ('inmediata', '1-3_meses', '3-6_meses', 'mas_de_6_meses', 'no_definida').
+      Commercial rationale: advisors sort their pipeline by urgency_level DESC +
+      interest_level DESC to prioritize callbacks. Storing raw text would require NLP
+      at query time; the normalized enum enables efficient SQL filtering.
 """
 
 from ...utils.logger import get_logger
@@ -14,6 +20,64 @@ _FALLBACK_RESULT = {
     "needs_handoff": False,
     "handoff_reason": None,
 }
+
+# Urgency normalization map — maps keyword patterns to structured enum values.
+# Commercial rationale: raw urgency text ("lo antes posible", "para fin de año")
+# is stored in slotUrgency for human readability. The normalized urgencyLevel
+# enables dashboard queries like WHERE urgencyLevel='inmediata' ORDER BY interestLevel DESC.
+_URGENCY_PATTERNS: list[tuple[list[str], str]] = [
+    (
+        ["inmediato", "inmediata", "ya", "urgente", "lo antes posible", "cuanto antes",
+         "esta semana", "dias", "días", "semana"],
+        "inmediata",
+    ),
+    (
+        ["próximo mes", "proximo mes", "1 mes", "2 meses", "3 meses", "este mes",
+         "30 días", "30 dias", "mes", "meses"],
+        "1-3_meses",
+    ),
+    (
+        ["3 a 6 meses", "4 meses", "5 meses", "6 meses", "medio año"],
+        "3-6_meses",
+    ),
+    (
+        ["fin de año", "el año que viene", "próximo año", "proximo año",
+         "más de 6 meses", "mas de 6 meses", "largo plazo", "sin prisa"],
+        "mas_de_6_meses",
+    ),
+]
+
+
+def normalize_urgency_level(raw_urgency: str | None) -> str:
+    """
+    Convert raw urgency text extracted by the agent into a normalized enum value.
+
+    Commercial rationale:
+        The normalized urgency_level is persisted in the Lead.urgencyLevel DB column
+        alongside the raw Lead.slotUrgency text. This separation serves different
+        use cases:
+        - slotUrgency: shown verbatim to advisors for human context
+        - urgencyLevel: used in SQL ORDER BY / WHERE filters in the advisor dashboard
+        The two-column approach avoids running NLP at query time and keeps the
+        dashboard fast even with thousands of leads.
+
+    Args:
+        raw_urgency: The raw urgency string extracted by slot_check
+            (e.g., "lo antes posible", "para fin de año"). None or empty = no_definida.
+
+    Returns:
+        One of: "inmediata", "1-3_meses", "3-6_meses", "mas_de_6_meses", "no_definida".
+    """
+    if not raw_urgency:
+        return "no_definida"
+
+    urgency_lower = raw_urgency.lower().strip()
+
+    for keywords, level in _URGENCY_PATTERNS:
+        if any(kw in urgency_lower for kw in keywords):
+            return level
+
+    return "no_definida"
 
 
 def evaluate_lead(state: AgentState) -> dict:
@@ -104,6 +168,9 @@ def evaluate_lead(state: AgentState) -> dict:
             else:
                 handoff_reason = "qualified_lead"
 
+        # Normalize urgency level for structured DB queries (Sales Closer Engine v2)
+        urgency_level = normalize_urgency_level(slots.get("urgency"))
+
         logger.info(
             "evaluate_lead.result",
             extra={
@@ -111,13 +178,19 @@ def evaluate_lead(state: AgentState) -> dict:
                 "interest_level": interest_level,
                 "needs_handoff": needs_handoff,
                 "handoff_reason": handoff_reason,
+                "urgency_level": urgency_level,
             },
         )
+
+        # Return urgency_level as a slot update so it is persisted via the slots dict
+        updated_slots = dict(slots)
+        updated_slots["urgency_level"] = urgency_level
 
         return {
             "interest_level": interest_level,
             "needs_handoff": needs_handoff,
             "handoff_reason": handoff_reason,
+            "slots": updated_slots,
         }
 
     except Exception as e:

@@ -1,50 +1,44 @@
-# Implementation Plan: Production Integrity Hardening
+# Implementation Plan: Sales Closer Engine v2
 
-**Branch**: `feature/production-integrity-final` | **Date**: 2026-03-20 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/specs/main/spec.md`
+**Branch**: `feature/sales-closer-engine-v2` | **Date**: 2026-03-21 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification — Sales Closer Engine v2 (evolución de captación pasiva a motor de cierre)
 
 ---
 
 ## Summary
 
-This plan addresses a P0 multi-vector production incident affecting the WhatsApp Sales Agent system. The incident involves WPPConnect session failures (OOM headless browser), frontend stale data from cached Server Components, absent CORS middleware on the backend API, no circuit breaker for unreachable services, and lead status polling too slow for real-time advisor workflows. All four services (WPPConnect on Fly.io, backend-api on Fly.io, agent-langgraph on Fly.io, frontend on Vercel) require targeted patches.
+Transform the existing passive-capture LangGraph agent into a **High-Performance Sales Closer** by injecting hyper-local Colombian property inventory (Mock-RAG), redesigning the conversational persona with closing logic (CTA-first responses, objection-handling), enriching lead persistence with urgency level and neighborhood preference, and hardening the system against inventory-query failures via graceful fallback — all without touching WPPConnect stability or the Next.js dashboard.
+
+**Technical approach**: Add a `InventoryService` (pure Python, file-based) that loads `data/inventory_colombia.json` at startup, expose a `query_inventory` tool callable from `generate_response` and `evaluate_lead` nodes, update system prompt templates to embed CTA instructions and objection-handling logic, add two Prisma columns (`slotNeighborhood`, `urgencyLevel`) with a non-destructive migration, and document every new function with sales-rationale docstrings.
 
 ---
 
 ## Technical Context
 
-**Language/Version**: TypeScript 5.x (backend-api, frontend), Python 3.11 (agent-langgraph)
-**Primary Dependencies**: Express 4.x, Next.js 14, LangGraph 0.2.x, Prisma 5.x, SWR 2.x, WPPConnect-Server-CLI latest
-**Storage**: PostgreSQL (Neon Serverless), file-based WPPConnect session tokens on Fly.io volume
-**Testing**: Manual integration testing (no automated test suite in scope for this patch)
-**Target Platform**: Fly.io (São Paulo, gru region) + Vercel Edge Network
-**Project Type**: Microservices web application (4 services)
-**Performance Goals**: Lead status updates visible within 3s; QR render within 30s of cold start
-**Constraints**: Fly.io micro-VM: 1 shared CPU, 512MB–1GB RAM; Neon free tier: 10 max connections; Vercel serverless: cold start budget ~1s
-**Scale/Scope**: Single real-estate agency, ~10–50 concurrent leads, 1 human advisor
+**Language/Version**: Python 3.11 (agent-langgraph) · TypeScript 5.x (backend-api) · Next.js 14 (frontend)
+**Primary Dependencies**: LangGraph 0.2.x, Groq SDK, FastAPI, Pydantic-settings, Prisma 5.x, Express 4.x
+**Storage**: Neon PostgreSQL (via Prisma + AsyncPostgresSaver), `data/inventory_colombia.json` (file-based mock-RAG, read-only at runtime)
+**Testing**: pytest (agent) · Jest/Supertest (backend-api)
+**Target Platform**: Fly.io (agent-langgraph + backend-api) · Vercel (frontend)
+**Project Type**: Multi-service web application (Python FastAPI + Node.js REST API + Next.js dashboard)
+**Performance Goals**: Agent response latency ≤ 3s p95 · Inventory query ≤ 50ms (in-process, no network) · Dashboard poll 2500ms already in place
+**Constraints**: No WPPConnect config changes · No dashboard regressions · No destructive Prisma migrations · All new code documented with commercial-logic docstrings
+**Scale/Scope**: ~100 concurrent leads · Inventory dataset ~50 properties across 4 cities
 
 ---
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research.*
+*Note: Project constitution file is unpopulated (template placeholders only). Applying inferred principles from CLAUDE.md and user requirements.*
 
-> **Note**: The constitution.md in this project is an unfilled template — no project-specific principles have been ratified yet. Proceeding with SRE/production-integrity best practices as the implicit constitution.
-
-**Implicit gates applied:**
-- ✅ No backwards-incompatible database schema changes (this is a hardening/patching sprint)
-- ✅ All secrets remain in environment variables (no new hardcoded values introduced)
-- ✅ Changes are narrowly scoped to the incident surface area (R1–R9 from spec)
-- ✅ Complexity justified: Circuit breaker adds 1 client-side component; CORS adds 1 middleware; both are standard production requirements
-- ✅ Existing auth flow (`x-internal-key`) preserved
-
-**Complexity Tracking (justified additions):**
-
-| Addition | Why Needed | Simpler Alternative Rejected Because |
-|----------|------------|-------------------------------------|
-| CORS middleware | Cross-origin requests from Vercel to Fly.io require explicit headers | Browser enforces CORS; cannot be skipped |
-| Circuit breaker component | UX requirement: no blank errors when backend down | Error boundary alone doesn't handle retry state |
-| `/api/v1/auth/qr` endpoint | Retry logic for QR fetch; decoupled from WPPConnect status endpoint | Frontend calling WPPConnect directly would bypass backend auth |
+| Gate | Status | Notes |
+|------|--------|-------|
+| No regression on WPPConnect | ✅ PASS | Inventory + prompt changes are isolated to agent-langgraph service |
+| No regression on dashboard | ✅ PASS | No frontend changes in this feature |
+| Non-destructive DB migration | ✅ PASS | Only `ADD COLUMN` operations; existing rows default to `NULL` |
+| Secrets remain env-driven | ✅ PASS | JSON inventory is static data, no secrets involved |
+| All new code documented | ✅ REQUIRED | Enforce via docstrings with sales-rationale explanation |
+| Conventional commits on feature branch | ✅ REQUIRED | Branch: `feature/sales-closer-engine-v2` |
 
 ---
 
@@ -55,98 +49,74 @@ This plan addresses a P0 multi-vector production incident affecting the WhatsApp
 ```text
 specs/main/
 ├── plan.md              # This file
-├── spec.md              # Feature specification
-├── research.md          # Phase 0 output — audit findings & decisions
-├── data-model.md        # Phase 1 output — no schema changes, ENV audit
-├── quickstart.md        # Phase 1 output — deployment guide
-├── contracts/           # Phase 1 output — API contracts
-│   ├── qr-endpoint.md
-│   ├── cors-policy.md
-│   └── circuit-breaker-states.md
-└── tasks.md             # Phase 2 output (/speckit.tasks command)
+├── research.md          # Phase 0 output — Mock-RAG, CTA psychology, schema decisions
+├── data-model.md        # Phase 1 output — Inventory JSON schema + Prisma additions
+├── quickstart.md        # Phase 1 output — Dev setup for the new feature
+├── contracts/           # Phase 1 output
+│   ├── inventory-query.md    # InventoryService query contract
+│   └── agent-state-v2.md     # Updated AgentState contract
+└── tasks.md             # Phase 2 output (/speckit.tasks — NOT created by /speckit.plan)
 ```
 
-### Source Code (affected files)
+### Source Code Changes (repository root)
 
 ```text
-wppconnect-config/
-├── config.json                          # PATCH: add --single-process flag
-└── fly.toml                             # PATCH: add health check
+data/
+└── inventory_colombia.json        # NEW — Single Source of Truth for property inventory
 
-services/backend-api/src/
-├── index.ts                             # PATCH: add cors middleware
-├── middleware/
-│   └── cors.middleware.ts               # NEW: CORS configuration
-└── routes/
-    └── auth.route.ts                    # NEW: /api/v1/auth/qr endpoint
+services/agent-langgraph/src/
+├── tools/
+│   ├── real_estate_kb.py          # UNCHANGED — market-level knowledge base
+│   └── inventory_service.py       # NEW — Mock-RAG: loads + queries inventory_colombia.json
+├── graph/
+│   ├── state.py                   # MODIFIED — add preferred_neighborhood, urgency_level fields
+│   ├── nodes/
+│   │   ├── generate_response.py   # MODIFIED — inject inventory results + CTA logic
+│   │   └── evaluate_lead.py       # MODIFIED — use urgency_level in scoring
+│   └── graph.py                   # UNCHANGED — routing logic stays the same
+├── prompts/
+│   ├── system_prompt.py           # MODIFIED — add CTA instructions, objection-handling template
+│   └── slot_prompt.py             # MODIFIED — add preferred_neighborhood slot extraction
+└── main.py                        # MODIFIED — initialize InventoryService at startup
 
-services/frontend/src/app/
-├── dashboard/
-│   ├── page.tsx                         # PATCH: add force-dynamic
-│   ├── LeadsListClient.tsx              # PATCH: refreshInterval 4000→2500
-│   └── StatsGrid.tsx                    # PATCH: refreshInterval →2500
-└── dashboard/whatsapp/
-    └── page.tsx                         # PATCH: circuit breaker integration
-
-services/frontend/src/components/
-└── MaintenancePanel.tsx                 # NEW: maintenance mode UI component
+services/backend-api/
+└── prisma/
+    └── schema.prisma              # MODIFIED — add slotNeighborhood, urgencyLevel columns
+    └── migrations/                # NEW — migration for the two new columns
 ```
+
+**Structure Decision**: Web application (Option 2). All changes are concentrated in `agent-langgraph` (Python, AI logic) and `backend-api` (Prisma schema). The `frontend` and `wppconnect-config` services are untouched.
+
+---
+
+## Complexity Tracking
+
+| Addition | Why Needed | Simpler Alternative Rejected Because |
+|----------|------------|-------------------------------------|
+| `InventoryService` class (new file) | Encapsulates JSON load + filter logic; mockable in tests | Inline dict in prompt template makes unit testing impossible and the 50-property dataset too large to embed in every prompt call |
+| Separate `data/` directory at repo root | Single source of truth shared by agent + future admin tools | Storing in `src/tools/` would make it agent-only; marketing or admin tools may need to read/write the same data |
+| Two new Prisma columns | ISO 25010 Functional Suitability — persist urgency + neighborhood for advisor routing | Storing in free-form `agentNotes` would make structured queries impossible |
 
 ---
 
 ## Implementation Phases
 
-### Phase 1 — Fly.io Hardening (WPPConnect + Backend)
+### Phase 0 — Research (complete → see research.md)
 
-**P1.1 — Puppeteer flags**
-- Add `--single-process` to `createOptions.args` in `wppconnect-config/config.json`
-- Rationale: Required for single-CPU Fly.io VMs; prevents fork() failures in containers
+- [x] Mock-RAG patterns for file-based inventory in LangGraph agents
+- [x] CTA injection strategies in LLM system prompts
+- [x] Colombian professional real estate modisms + sales psychology
+- [x] Prisma non-destructive migration patterns for Neon
+- [x] LangGraph node modification patterns (preserving existing routing)
 
-**P1.2 — WPPConnect health check**
-- Add `[[services.http_checks]]` to `wppconnect-config/fly.toml`
-- Endpoint: `GET /api/{session}/{secretKey}/status-session` (or `/` if available)
+### Phase 1 — Design & Contracts (complete → see artifacts below)
 
-**P1.3 — CORS middleware**
-- Create `services/backend-api/src/middleware/cors.middleware.ts`
-- Mount BEFORE `authMiddleware` in `index.ts` so preflight OPTIONS requests pass through
-- Allow origin: `https://frontend-rho-one-21.vercel.app`
+- [x] `data/inventory_colombia.json` schema definition → `data-model.md`
+- [x] `InventoryService` query API → `contracts/inventory-query.md`
+- [x] Updated `AgentState` additions → `contracts/agent-state-v2.md`
+- [x] Prisma schema additions → `data-model.md`
+- [x] Development quickstart → `quickstart.md`
 
-**P1.4 — QR endpoint with retry**
-- Create `services/backend-api/src/routes/auth.route.ts`
-- `GET /api/v1/auth/qr` — calls WPPConnect, retries 3x on 5xx, returns `{ status, qrcode, connected }`
-- Mount in `index.ts`
+### Phase 2 — Tasks (next step → run /speckit.tasks)
 
-### Phase 2 — Neon/Prisma Hardening
-
-**P2.1 — DATABASE_URL validation**
-- Audit that `DATABASE_URL` in Fly.io secrets includes `?sslmode=require`
-- Document in `specs/main/data-model.md`
-- Add `connection_limit=5` if using Neon connection pooler URL
-
-**P2.2 — Prisma datasource override**
-- Update `prisma.client.ts` to explicitly pass SSL configuration
-
-### Phase 3 — Frontend Hardening
-
-**P3.1 — Force-dynamic**
-- Add `export const dynamic = 'force-dynamic'` to `/dashboard/page.tsx`
-
-**P3.2 — Polling intervals**
-- `LeadsListClient.tsx`: `refreshInterval: 4000` → `refreshInterval: 2500`
-- `StatsGrid.tsx`: audit and set to 2500ms
-
-**P3.3 — Circuit breaker / MaintenancePanel**
-- Create `MaintenancePanel.tsx` component
-- WhatsApp page: track consecutive errors; after 3 failures switch to maintenance state
-
-### Phase 4 — ISO 25010 Verification
-
-**P4.1 — LangGraph thread_id audit**
-- Confirm `lead_id` is in `AgentState` TypedDict ✅ (already present)
-- Confirm `thread_id = req.phone` is used consistently in `main.py` ✅
-- Confirm handoff node output dict includes `lead_id` (check that state key is not dropped)
-
-**P4.2 — ENV discrepancy audit**
-- Cross-reference all services' required env vars
-- Flag any hardcoded values in config files
-- Document in `data-model.md`
+See `tasks.md` (generated by `/speckit.tasks` command).

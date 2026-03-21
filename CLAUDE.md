@@ -1,8 +1,10 @@
 ﻿# whatsapp-sales-agent Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-20
+Auto-generated from all feature plans. Last updated: 2026-03-21
 
 ## Active Technologies
+- Python 3.11 (agent-langgraph) · TypeScript 5.x (backend-api) · Next.js 14 (frontend) + LangGraph 0.2.x, Groq SDK, FastAPI, Pydantic-settings, Prisma 5.x, Express 4.x (main)
+- Neon PostgreSQL (via Prisma + AsyncPostgresSaver), `data/inventory_colombia.json` (file-based mock-RAG, read-only at runtime) (main)
 
 - TypeScript 5.x (backend-api, frontend), Python 3.11 (agent-langgraph) + Express 4.x, Next.js 14, LangGraph 0.2.x, Prisma 5.x, SWR 2.x, WPPConnect-Server-CLI latest (main)
 
@@ -41,6 +43,7 @@ cd services/backend-api && npx prisma migrate deploy
 - All API responses include explicit TypeScript interfaces
 
 ## Recent Changes
+- main: Added Python 3.11 (agent-langgraph) · TypeScript 5.x (backend-api) · Next.js 14 (frontend) + LangGraph 0.2.x, Groq SDK, FastAPI, Pydantic-settings, Prisma 5.x, Express 4.x
 
 - main: Added TypeScript 5.x (backend-api, frontend), Python 3.11 (agent-langgraph) + Express 4.x, Next.js 14, LangGraph 0.2.x, Prisma 5.x, SWR 2.x, WPPConnect-Server-CLI latest
 
