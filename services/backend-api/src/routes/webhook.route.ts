@@ -38,26 +38,23 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
   }
 
   // ── QR code event ────────────────────────────────────────────────────────────
-  // WPPConnect v2.8.x fires `onQRCode` when a new QR is generated.
+  // WPPConnect v2.8.x fires event="qrcode" with fields: qrcode, urlcode, session.
   // `status-session` stays at INITIALIZING during this window, so we capture
   // the QR here and serve it from qr-store in GET /api/v1/auth/qr.
-  if (event === 'onQRCode') {
-    // Payload shapes observed in v2.8.x:
-    //   { event: 'onQRCode', data: '<qr_string>' }
-    //   { event: 'onQRCode', data: { code: '<qr_string>' } }
-    //   { event: 'onQRCode', qrCode: '<qr_string>' }
-    const raw = req.body?.data ?? req.body?.qrCode ?? req.body?.qrcode ?? null;
+  if (event === 'qrcode') {
+    // Payload: { event: 'qrcode', session: '...', qrcode: '<base64_img>', urlcode: '<url>' }
+    // Prefer the base64 image (qrcode) — fallback to urlcode for display.
     const qr: string | null =
-      typeof raw === 'string' ? raw
-      : typeof raw?.code === 'string' ? raw.code
-      : null;
+      (typeof req.body?.qrcode === 'string' && req.body.qrcode ? req.body.qrcode : null)
+      ?? (typeof req.body?.urlcode === 'string' && req.body.urlcode ? req.body.urlcode : null);
     if (qr) setQrCode(qr);
-    return res.status(200).json({ captured: 'onQRCode' });
+    return res.status(200).json({ captured: 'qrcode' });
   }
 
   // ── Session connected — clear stale QR ──────────────────────────────────────
-  if (event === 'onStateChange' || event === 'statusFind') {
-    const status: string | undefined = req.body?.data ?? req.body?.status;
+  // WPPConnect fires event="status-find" with status field when session changes.
+  if (event === 'status-find' || event === 'onStateChange' || event === 'statusFind') {
+    const status: string | undefined = req.body?.status ?? req.body?.data;
     if (status === 'isLogged' || status === 'CONNECTED') clearQrCode();
     return res.status(200).json({ captured: event, status });
   }
