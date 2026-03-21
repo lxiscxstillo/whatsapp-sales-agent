@@ -133,8 +133,9 @@ authRouter.post('/start-session', async (_req: Request, res: Response) => {
     await new Promise((r) => setTimeout(r, 1500));
 
     // 3. Start new session (generates a fresh QR)
+    // WPPConnect v2.x: start-session does NOT use secretKey in path — auth is via Bearer token
     await axios.post(
-      `${config.WPPCONNECT_URL}/api/${session}/${config.WPPCONNECT_SECRET_KEY}/start-session`,
+      `${config.WPPCONNECT_URL}/api/${session}/start-session`,
       {},
       { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
     );

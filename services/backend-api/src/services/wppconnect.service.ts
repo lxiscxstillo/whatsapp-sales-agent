@@ -8,6 +8,7 @@ const wppClient = axios.create({
 });
 
 export async function generateToken(): Promise<string> {
+  // WPPConnect v2.x: POST /api/{session}/{secretKey}/generate-token (secretKey in path, no body)
   const { data } = await wppClient.post(
     `/api/${config.WPPCONNECT_SESSION}/${config.WPPCONNECT_SECRET_KEY}/generate-token`
   );
