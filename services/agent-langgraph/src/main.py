@@ -139,8 +139,9 @@ async def lifespan(app: FastAPI):
     global _compiled_graph
 
     # ── Load property inventory (Sales Closer Engine v2) ─────────────────────
-    # Path: src/main.py → src/ → agent-langgraph/ → services/ → repo_root/ → data/
-    inventory_path = Path(__file__).parent.parent.parent.parent / "data" / "inventory_colombia.json"
+    # Path: /app/src/main.py → /app/src/ → /app/ (workdir) → data/
+    # In Docker, WORKDIR is /app and data/ is copied to /app/data/ via "COPY data ./data"
+    inventory_path = Path(__file__).parent.parent / "data" / "inventory_colombia.json"
     app.state.inventory = InventoryService(inventory_path)
     logger.info(
         "inventory.startup_status",
