@@ -90,6 +90,9 @@ export async function syncSlotsFromAgent(leadId: string, updatedSlots: Record<st
   if (updatedSlots.bedrooms != null) data.slotBedrooms = updatedSlots.bedrooms as string;
   if (updatedSlots.urgency != null) data.slotUrgency = updatedSlots.urgency as string;
   if (updatedSlots.main_need != null) data.slotMainNeed = updatedSlots.main_need as string;
+  // Sales Closer Engine v2: persist neighborhood preference and normalized urgency level
+  if (updatedSlots.preferred_neighborhood != null) data.slotNeighborhood = updatedSlots.preferred_neighborhood as string;
+  if (updatedSlots.urgency_level != null) data.urgencyLevel = updatedSlots.urgency_level as string;
 
   if (Object.keys(data).length === 0) return null;
 

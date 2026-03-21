@@ -111,6 +111,7 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
     const lead = await leadService.findOrCreate(phone);
 
     // Build slots map from lead's flat columns
+    // Sales Closer Engine v2: includes preferred_neighborhood and urgency_level
     const currentSlots: Record<string, unknown> = {
       name: lead.name,
       city: lead.slotCity,
@@ -122,6 +123,9 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
       bedrooms: lead.slotBedrooms,
       urgency: lead.slotUrgency,
       main_need: lead.slotMainNeed,
+      // v2 slots — carry forward across conversation turns
+      preferred_neighborhood: (lead as Record<string, unknown>).slotNeighborhood ?? null,
+      urgency_level: (lead as Record<string, unknown>).urgencyLevel ?? null,
     };
 
     // 3. Emit message.received event

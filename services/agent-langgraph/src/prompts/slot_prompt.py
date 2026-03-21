@@ -32,6 +32,17 @@ class SlotExtraction(BaseModel):
         None,
         description="Name of slot that this message contradicts (e.g., 'city' if user changes city)"
     )
+    preferred_neighborhood: Optional[str] = Field(
+        None,
+        description=(
+            "Specific barrio or neighborhood explicitly named by the lead — "
+            "e.g., 'Palermo', 'Maridíaz', 'El Poblado', 'Chicó'. "
+            "Extract ONLY if the lead explicitly names a neighborhood, not just a city. "
+            "Pasto examples: 'busco en Palermo', 'me gusta Maridíaz', 'algo en El Prado'. "
+            "Bogotá examples: 'en Chicó', 'sector Cedritos'. "
+            "Leave null if only a city is mentioned without a specific barrio."
+        )
+    )
 
 
 SLOT_SYSTEM_PROMPT = """Eres un extractor de información para una aplicación inmobiliaria colombiana.
@@ -50,6 +61,11 @@ Reglas:
 5. Para intent usa solo: "comprar" o "arrendar" — no inferir si no está claro.
 6. Si el usuario corrige información previa (ej: "mejor en Bogotá" cuando antes dijo Medellín),
    marca contradicts_slot con el nombre del campo corregido.
+7. Para preferred_neighborhood: extrae SOLO si el usuario nombra un barrio específico (no solo la ciudad).
+   - Pasto: Palermo, Maridíaz, Tamasagra, Anganoy, El Prado, San Ignacio, Avenida Panamericana
+   - Bogotá: Chicó, Cedritos, Rosales, Usaquén, Chapinero
+   - Medellín: El Poblado, Laureles, Envigado, Belén
+   - Cali: Pance, Ciudad Jardín, El Ingenio, Granada
 
 Contexto ya conocido (NO extraer de nuevo si el usuario no lo modifica):
 {known_slots_context}

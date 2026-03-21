@@ -20,6 +20,13 @@ class LeadSlots(TypedDict, total=False):
     urgency: Optional[str]
     main_need: Optional[str]
     objections: Optional[list[str]]
+    # --- Sales Closer Engine v2 ---
+    preferred_neighborhood: Optional[str]  # Specific barrio preference (e.g. "Palermo")
+    # Commercial rationale: More granular than `zone` — enables hyper-local inventory
+    # matching. Extracted in slot_check when the lead names a specific barrio.
+    urgency_level: Optional[str]  # Normalized: "inmediata"|"1-3_meses"|"3-6_meses"|"mas_de_6_meses"|"no_definida"
+    # Commercial rationale: Advisors sort by urgency_level DESC + interest_level DESC to
+    # prioritize callbacks. Raw `urgency` text would require NLP at query time.
 
 
 def default_slots() -> LeadSlots:
@@ -35,6 +42,8 @@ def default_slots() -> LeadSlots:
         urgency=None,
         main_need=None,
         objections=[],
+        preferred_neighborhood=None,
+        urgency_level=None,
     )
 
 

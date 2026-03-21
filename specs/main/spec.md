@@ -1,85 +1,77 @@
-# Feature Spec: Production Integrity Hardening (P0 Incident Response)
+# Feature Spec: Sales Closer Engine v2
 
-**Feature ID**: production-integrity-final
-**Date**: 2026-03-20
-**Priority**: P0 — Critical Production Incident
-**Author**: SRE / Senior Fullstack Architect
+**Feature ID**: sales-closer-engine-v2
+**Date**: 2026-03-21
+**Priority**: P1 — Strategic Feature Evolution
+**Author**: Principal AI Solution Architect & Lead Conversational Engineer
+**Supersedes**: production-integrity-final (2026-03-20) — production is stable, evolving to sales closing
 
 ---
 
 ## Problem Statement
 
-The WhatsApp Sales Agent system is experiencing a P0 multi-vector production incident:
+The WhatsApp Sales Agent operates as a passive lead-capture bot: it qualifies leads and routes them to advisors, but does not actively close. Conversion rates are limited because:
 
-1. **WPPConnect session failure**: Puppeteer headless browser not starting correctly on Fly.io micro-VMs, causing OOM errors and preventing QR code generation.
-2. **Frontend stale data**: Next.js Server Components serving cached HTML; leads dashboard reflects outdated lead statuses.
-3. **Integration errors (404/500)**: CORS policy not configured on backend-api, causing potential cross-origin failures when browser makes direct requests. WPPConnect webhook URL hardcoded in config.json (not env-driven).
-4. **Circuit breaker absent**: Frontend shows empty console errors when backend is unreachable instead of user-friendly maintenance state.
-5. **Polling too slow**: Lead status changes (NEW → QUALIFYING → HOT) not reflected fast enough for real-estate advisors.
+1. **No hyper-local knowledge**: The agent lacks property-level inventory data for specific neighborhoods in Pasto (Palermo, Maridíaz, etc.), making responses generic and low-trust.
+2. **No Call-to-Action logic**: The agent never proposes a visit or a call — it waits for the lead to ask.
+3. **No objection handling**: When a lead says "es muy caro", the agent has no mechanism to offer an adjacent-zone alternative.
+4. **Incomplete lead profiling**: Neighborhood preference and urgency level are not persisted in structured form for advisor routing.
+5. **No sales persona**: The tone is neutral; it does not project hyper-local authority or Colombian professional real estate vocabulary.
 
 ---
 
 ## Requirements
 
-### R1 — Headless Browser Hardening
-- Inject Puppeteer flags: `--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-accelerated-2d-canvas`, `--no-first-run`, `--no-zygote`, `--single-process`, `--disable-gpu`
-- Ensure WPPConnect fly.toml has health check endpoint configured
-- `auto_stop_machines = false` must remain to preserve WebSocket connections
+### R1 — Mock-RAG Property Inventory
+- Create `data/inventory_colombia.json` as Single Source of Truth for simulated property data.
+- Include properties for **Pasto** (Palermo, Maridíaz, Avenida Panamericana, Tamasagra, Anganoy, El Prado, San Ignacio), **Bogotá** (Chicó, Cedritos), **Medellín** (El Poblado, Laureles), **Cali** (Pance).
+- Each record: `id`, `type`, `city`, `zone`, `price_cop`, `price_display`, `area_m2`, `bedrooms`, `bathrooms`, `amenities`, `unique_selling_argument`, `stratum`, `status`, `contact_advisor`.
+- Implement `InventoryService` (Python, in-process) that loads the JSON at startup and exposes a `query()` method.
+- Graceful fallback: if JSON fails to load, `query()` returns `[]` and the agent uses general market knowledge.
 
-### R2 — QR Endpoint with Retry
-- Expose a dedicated `/api/v1/auth/qr` route in backend-api that:
-  - Fetches QR from WPPConnect `/status-session`
-  - Returns `{ status, qrcode, connected }` with retry on failure (max 3 attempts, 500ms delay)
-  - Frontend consumes this endpoint for QR rendering
+### R2 — Sales Closer Persona & CTA Logic
+- Update `system_prompt.py` to project: executive tone, empathy, Colombian professional modisms ("Con mucho gusto", "Sector de alta valorización").
+- Inject `{inventory_properties}` block into every prompt when matching properties exist.
+- Inject `{cta_instruction}` variable computed dynamically per lead stage:
+  - `interest_level >= 3`: propose a visit.
+  - `interest_level >= 4` or `HIGH_INTEREST`: propose videocall or immediate visit with positive urgency.
+  - `OBJECTION` + price keyword: offer adjacent-zone alternative.
+  - Cold lead (level 1): ask discovery question only.
 
-### R3 — CORS Policy
-- Add CORS middleware to backend-api allowing origin `https://frontend-rho-one-21.vercel.app`
-- Allowed headers: `Content-Type`, `Authorization`, `X-Requested-With`, `x-internal-key`
-- Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
-- Preflight cache: 24h
+### R3 — Objection Handling via Adjacent Zones
+- Implement zone adjacency map in `InventoryService` (e.g., Palermo ↔ Maridíaz ↔ El Prado).
+- When `last_intent == OBJECTION` and price-related keyword detected, query alternatives in adjacent zones and inject as `{inventory_alternative}`.
 
-### R4 — Neon/Prisma Connection Hardening
-- `DATABASE_URL` must include `?sslmode=require&connection_limit=5&pool_timeout=0` parameters
-- Prisma client must pass `datasources.db.url` with SSL config
-- Document the required Neon connection string format
+### R4 — Extended Lead Profiling (ISO 25010 Functional Suitability)
+- Add `preferred_neighborhood: Optional[str]` slot — extracted in `slot_check` when lead names a specific barrio.
+- Add `urgency_level: Optional[str]` slot — normalized enum computed in `evaluate_lead` from raw `urgency` text.
+  - Values: `"inmediata"`, `"1-3_meses"`, `"3-6_meses"`, `"mas_de_6_meses"`, `"no_definida"`.
+- Add two nullable Prisma columns: `slotNeighborhood`, `urgencyLevel`.
+- Map both new slots in `webhook.route.ts` lead persistence.
 
-### R5 — Frontend Cache Elimination
-- Add `export const dynamic = 'force-dynamic'` and `export const revalidate = 0` to `/dashboard/page.tsx`
-- Ensure all Next.js Server Components that render lead data opt out of static caching
+### R5 — Reliability Hardening (ISO 25010 Reliability)
+- Implement three-layer fallback: JSON load failure → empty query → LLM timeout (existing).
+- All `InventoryService` errors logged at WARNING (never ERROR/exception) — agent never crashes on inventory issues.
 
-### R6 — Reactive Polling (2500ms)
-- Change `LeadsListClient` `refreshInterval` from 4000ms → 2500ms
-- Change `StatsGrid` polling to 2500ms
-- `WhatsAppPage` polling already adaptive — no change needed
-
-### R7 — Circuit Breaker / Maintenance Mode
-- Frontend: after 3 consecutive failed health pings to backend, display `MaintenancePanel` component
-- `MaintenancePanel` shows "Mantenimiento Temporal" state with retry countdown instead of raw error
-- Circuit breaker state: `CLOSED` (normal) → `OPEN` (maintenance) → `HALF_OPEN` (testing recovery)
-
-### R8 — LangGraph Handoff Integrity (ISO 25010 — Functional Suitability)
-- Verify `lead_id` flows correctly through all LangGraph nodes
-- Ensure `thread_id = req.phone` is consistent across all agent invocations
-- Confirm handoff node preserves `lead_id` in state output (no state key drop on `handoff` → `END` transition)
-
-### R9 — ENV Discrepancy Audit
-- Document all environment variables required per service
-- Flag hardcoded values in config.json that must be env-driven
-- Provide patched wppconnect config.ts that overrides secretKey and webhookUrl from env at startup
+### R6 — Maintainability (ISO 25010 Maintainability)
+- All new functions documented with JSDoc/Docstrings explaining the **commercial logic rationale**, not just technical behavior.
 
 ---
 
 ## Out of Scope
-- Adding new LangGraph nodes or lead qualification logic
-- Migrating from Neon to another database provider
-- Changing the WhatsApp provider from WPPConnect to another service
-- UI redesign of the dashboard
+- Adding new LangGraph graph nodes (routing in `graph.py` unchanged)
+- Vector database or embedding-based semantic search
+- UI changes to the Next.js dashboard
+- Changes to WPPConnect configuration
+- Migrating from Groq to another LLM provider
 
 ---
 
 ## Success Criteria
-1. WPPConnect starts cleanly on Fly.io and QR code renders in frontend within 30s of cold start
-2. Lead status changes reflect in dashboard within 3 seconds
-3. Backend unreachable → frontend shows "Mantenimiento Temporal" instead of blank/error
-4. All environment variables are validated at startup with no hardcoded secrets
-5. Handoff node output always includes non-null `lead_id` in state
+1. Agent responds with specific property data (ID, price, amenities) when lead mentions Palermo or any tracked neighborhood.
+2. Every agent response to a warm lead (interest_level ≥ 3) includes a CTA proposing a visit or call.
+3. When lead objects to price, agent offers an alternative property in an adjacent zone.
+4. `slotNeighborhood` and `urgencyLevel` columns populated in Neon DB for qualifying leads.
+5. If `inventory_colombia.json` is deleted at runtime, agent continues responding using general market knowledge (no crash, no error surfaced to user).
+6. All new Python functions have docstrings with a "Commercial rationale:" section.
+7. WPPConnect session, QR flow, and dashboard remain 100% operational after deployment.

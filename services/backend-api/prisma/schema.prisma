@@ -42,6 +42,10 @@ model Lead {
   slotMainNeed       String?    // Main identified need
   slotObjections     String[]   // Detected objections list
 
+  // ── Sales Closer Engine v2 ────────────────────────────────────────────────
+  slotNeighborhood   String?    // Preferred barrio extracted by agent (e.g. "Palermo")
+  urgencyLevel       String?    // Normalized urgency: "inmediata"|"1-3_meses"|"3-6_meses"|"mas_de_6_meses"|"no_definida"
+
   // ── Metadata ──────────────────────────────────────────────────────────────
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt

@@ -1,262 +1,209 @@
-# Research: Production Integrity Hardening
+# Research: Sales Closer Engine v2
 
-**Phase**: 0 — Audit & Research
-**Date**: 2026-03-20
+**Phase**: 0 — Research
+**Date**: 2026-03-21
 **Status**: COMPLETE — all unknowns resolved
 
 ---
 
-## 1. WPPConnect Headless Browser on Fly.io
+## 1. Mock-RAG Pattern for File-Based Property Inventory
 
 ### Decision
-Add `--single-process` flag to Puppeteer `createOptions.args` in `config.json`. Keep all existing flags. No `--headless=new` needed (WPPConnect already handles headless mode internally).
-
-### Current state
-```json
-"args": [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-  "--disable-dev-shm-usage",
-  "--disable-accelerated-2d-canvas",
-  "--no-first-run",
-  "--no-zygote",
-  "--disable-gpu"
-]
-```
-
-### Required addition
-```json
-"--single-process"
-```
+Use an **in-process `InventoryService`** class that loads `data/inventory_colombia.json` once at FastAPI startup (lifespan) and exposes a synchronous `query()` method. No vector database required at MVP scale (~50 properties).
 
 ### Rationale
-- `--single-process` prevents Chromium from spawning separate renderer, GPU, and utility processes, which fail on containers with limited file descriptors and shared-CPU Fly.io VMs.
-- Fly.io micro-VMs have `--no-zygote` and `--no-sandbox` as prerequisites; `--single-process` is the final piece that eliminates fork() failures.
-- `--disable-gpu` is already present and handles GPU process elimination independently.
+- At 50 properties, cosine-similarity search adds latency and infrastructure cost with no accuracy gain.
+- File-based loading means **zero network latency**; the bottleneck stays the LLM call (≈1.5–2.5s).
+- `InventoryService` is injected into node functions via `app.state`, preserving LangGraph's stateless node design.
+- Graceful fallback: if the JSON file fails to load, `InventoryService` returns `[]` and nodes use the existing `real_estate_kb.py` market-level knowledge — conversation never breaks.
 
-### Alternatives considered
-- **--headless=new**: Tried on other projects; not needed since WPPConnect server manages headless mode.
-- **Increasing VM memory to 2GB**: More expensive, doesn't fix the root cause (process model).
-- **--disable-web-security**: Security risk; rejected.
+### Alternatives Considered
+| Alternative | Rejected Because |
+|-------------|------------------|
+| ChromaDB / FAISS vector store | Adds Dockerfile complexity + cold-start overhead on Fly.io for 50 records |
+| Inline Python dict in `real_estate_kb.py` | JSON file at `data/` is accessible to future admin or reporting tools outside the agent |
+| Airtable / Notion external API | Network dependency → availability risk; single JSON file is zero-dependency |
+| PostgreSQL `Property` table | Valid long-term; premature for MVP demo data — JSON file is faster to iterate |
 
 ---
 
-## 2. CORS Configuration for Cross-Cloud Calls
+## 2. CTA (Call-to-Action) Injection Strategy
 
 ### Decision
-Add CORS middleware to backend-api Express app. Mount before `authMiddleware`.
+Add a `{cta_instruction}` variable to the `system_prompt.py` template. The value is computed in `generate_response.py` based on `interest_level` and `last_intent` before every LLM call.
+
+### CTA Rules by Lead Stage
+| Condition | CTA Instruction Injected |
+|-----------|--------------------------|
+| `interest_level >= 3` AND `city` slot present | "Proponga agendar una visita al inmueble específico para esta semana." |
+| `interest_level >= 4` OR `last_intent == HIGH_INTEREST` | "Proponga una videollamada o visita presencial de inmediato usando urgencia positiva: 'Las unidades en esa zona se están moviendo rápido'." |
+| `last_intent == OBJECTION` AND price keyword detected | "Ofrezca la alternativa del inventario como solución antes de cerrar su respuesta." |
+| `interest_level == 1` (NEW lead) | "Formule una sola pregunta abierta para conocer ciudad y tipo de inmueble. No proponga visita aún." |
+| `needs_handoff == True` | "No genere CTA — el nodo handoff tomará el control de este turno." |
 
 ### Rationale
-Although current architecture routes all browser requests through Next.js API handlers (server-side proxy), there are two scenarios where CORS is needed:
-1. WPPConnect direct webhook delivery: not a browser call, CORS not needed here
-2. Future direct browser-to-API calls (e.g., SSE for real-time updates): will fail without CORS
-3. User-facing error messages in browser devtools may mislead: explicit CORS prevents confusion
-
-The most critical reason: Next.js API routes on Vercel **do** make server-side calls to Fly.io, but if the backend ever returns a redirect (301/302), the browser may follow it — requiring CORS on the final destination.
-
-### Implementation
-```typescript
-// cors.middleware.ts
-import cors from 'cors';
-
-export const corsMiddleware = cors({
-  origin: [
-    'https://frontend-rho-one-21.vercel.app',
-    // Allow localhost for development
-    /^http:\/\/localhost(:\d+)?$/,
-  ],
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-internal-key'],
-  maxAge: 86400, // 24h preflight cache
-  credentials: false, // No cookies used; internal key in header
-});
-```
-
-### Alternatives considered
-- **Wildcard `*` origin**: Rejected — exposes internal API to all origins
-- **No CORS / keep as-is**: Rejected — P0 requirement explicitly calls for hardening
+- Decoupling the CTA from the base persona means the base persona stays stable while the sales aggressiveness is dynamically calibrated per lead stage.
+- A cold lead receiving an immediate "visit proposal" feels pushy; a hot lead NOT receiving a CTA loses momentum.
 
 ---
 
-## 3. QR Endpoint Architecture
+## 3. Objection Handling via Adjacent-Zone Inventory
 
 ### Decision
-Add `GET /api/v1/auth/qr` to backend-api with retry wrapper. Frontend `/api/whatsapp` route handler continues to proxy through Next.js (no direct frontend-to-wppconnect calls).
+When `last_intent == OBJECTION` and the user message contains price-related keywords (e.g., "caro", "costoso", "presupuesto", "precio"), `generate_response.py` queries `InventoryService` for alternatives in **adjacent zones** using a hardcoded adjacency map.
 
-### Current flow
-```
-Frontend (browser) → Next.js /api/whatsapp → WPPConnect /status-session (direct)
-```
-
-### New flow
-```
-Frontend (browser) → Next.js /api/whatsapp → backend-api /api/v1/auth/qr → WPPConnect /status-session
-                                              [retry logic, auth, normalization here]
-```
-
-### Rationale
-- Centralizes WPPConnect auth token management in backend-api (single source of truth)
-- Retry logic prevents transient WPPConnect startup failures from surfacing to users
-- Decouples frontend from WPPConnect URL and auth token details
-
-### Alternatives considered
-- **Keep direct call from Next.js route handler**: Simpler but duplicates token management logic; no retry standardization
-- **Server-Sent Events (SSE) for QR streaming**: Better UX but scope too large for P0 patch
-
----
-
-## 4. Neon / Prisma Connection Pooling
-
-### Decision
-Document and enforce `?sslmode=require&pgbouncer=true&connection_limit=5` parameters in `DATABASE_URL`. No code change to `PrismaClient` instantiation needed if env var is correct.
-
-### Neon connection string format
-```
-# Direct connection (use in migrations only)
-postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/dbname?sslmode=require
-
-# Pooled connection (use in production app runtime)
-postgresql://user:pass@ep-xxx-pooler.us-east-2.aws.neon.tech/dbname?sslmode=require&pgbouncer=true&connection_limit=5
-```
-
-### Prisma requirements for Neon
-- Use **pooled** endpoint for backend-api (Node.js long-running process with Prisma connection pool)
-- Use **direct** endpoint for `prisma migrate deploy` (run during Docker build/startup)
-- `prepare_threshold=0` is set correctly in the Python agent's `AsyncConnectionPool` ✅
-- Prisma 5.x handles pgbouncer mode via `?pgbouncer=true` URL parameter
-
-### Current prisma.client.ts
-The singleton pattern is correct. The main risk is if `DATABASE_URL` is missing `?sslmode=require`, causing SSL handshake failures on Neon's TLS-required endpoints.
-
-### Alternatives considered
-- **@neondatabase/serverless adapter**: Better for Vercel serverless but overkill for backend-api which is a long-running Docker container
-- **pgbouncer sidecar on Fly.io**: Too complex for current scale
-
----
-
-## 5. Frontend Dynamic Rendering & Polling
-
-### Decision
-- Add `export const dynamic = 'force-dynamic'` to `/dashboard/page.tsx` (Server Component)
-- Change `LeadsListClient` `refreshInterval`: 4000ms → 2500ms
-- Change `StatsGrid` `refreshInterval` to 2500ms
-- Keep `WhatsAppPage` polling as-is (adaptive interval already implemented)
-
-### Rationale
-- Next.js 14 App Router caches Server Component responses by default (static rendering)
-- `DashboardPage` uses `searchParams` (dynamic API), which should already opt it out of static caching in Next.js 14.2+, but explicit `force-dynamic` is safer
-- 2500ms interval meets the <3s lead status update requirement with buffer for network latency
-
-### Alternatives considered
-- **React Query instead of SWR**: Both are equivalent; SWR already installed
-- **WebSocket / SSE**: Better for real-time but requires infrastructure changes outside P0 scope
-- **1000ms polling**: Would double API calls with minimal UX benefit
-
----
-
-## 6. Circuit Breaker / Maintenance Mode
-
-### Decision
-Implement a lightweight client-side circuit breaker in `WhatsAppPage` using SWR's `onError` callback and a failure counter ref. No external library needed.
-
-### State machine
-```
-CLOSED (normal) → [3 consecutive errors] → OPEN (maintenance)
-OPEN → [retry after 30s] → HALF_OPEN
-HALF_OPEN → [success] → CLOSED
-HALF_OPEN → [failure] → OPEN
-```
-
-### Implementation approach
-```typescript
-// In WhatsAppClient component
-const failureCount = useRef(0);
-const [circuitState, setCircuitState] = useState<'CLOSED' | 'OPEN' | 'HALF_OPEN'>('CLOSED');
-
-// SWR onError callback
-onError: () => {
-  failureCount.current += 1;
-  if (failureCount.current >= 3) setCircuitState('OPEN');
-}
-
-// SWR onSuccess callback
-onSuccess: () => {
-  failureCount.current = 0;
-  setCircuitState('CLOSED');
+### Zone Adjacency Map
+```python
+ADJACENT_ZONES = {
+    # Pasto (Nariño)
+    "Palermo":             ["Maridíaz", "El Prado"],
+    "Maridíaz":            ["Palermo", "San Ignacio"],
+    "Avenida Panamericana":["Tamasagra", "Anganoy"],
+    "Tamasagra":           ["Avenida Panamericana", "Anganoy"],
+    "Anganoy":             ["Tamasagra", "El Prado"],
+    "El Prado":            ["Anganoy", "San Ignacio"],
+    "San Ignacio":         ["El Prado", "Maridíaz"],
+    # Bogotá
+    "Chicó":               ["Cedritos", "Rosales"],
+    "Cedritos":            ["Chicó", "Santa Bárbara"],
+    # Medellín
+    "El Poblado":          ["Laureles", "Envigado"],
+    "Laureles":            ["El Poblado", "Belén"],
+    # Cali
+    "Pance":               ["Ciudad Jardín", "El Ingenio"],
 }
 ```
 
-### Alternatives considered
-- **cockatiel library**: Proper circuit breaker but adds dependency; overkill for this UI use case
-- **Error boundary only**: No retry state management; shows generic error
+### Rationale
+Explicit adjacency prevents the LLM from hallucinating distant zones as "similar" — critical for building trust with buyers who know their city well. Pasto buyers in particular have strong neighborhood identity.
 
 ---
 
-## 7. LangGraph thread_id / Handoff Integrity Audit
+## 4. Colombian Professional Real Estate Modisms
 
-### Finding: PASS ✅ (no changes needed)
+### Decision
+Embed the following vocabulary directly into the base persona section of `system_prompt.py`:
 
-**thread_id consistency:**
-- `main.py` line 162: `thread_id = req.phone` — passed as `config["configurable"]["thread_id"]`
-- All LangGraph invocations use the same config key; PostgreSQL checkpointer stores state per `thread_id`
-- Phone format: `5491123456789` (stripped of `@c.us` suffix by webhook.route.ts) ✅
+| Situation | Phrase |
+|-----------|--------|
+| Acknowledgment | "Con mucho gusto", "Claro que sí" |
+| Zone promotion | "Sector de alta valorización", "Zona de gran proyección" |
+| Budget bridge | "Tenemos opciones muy interesantes en un rango similar" |
+| Urgency (positive) | "Las unidades en esa zona se están moviendo rápido" |
+| Appointment proposal | "¿Le parece si coordinamos una visita para el jueves?" |
+| Closing warmth | "Con gusto le acompaño en este proceso" |
+| Expertise signal | "Conozco muy bien ese sector" |
+| Pasto specifics | "Cerca al Galeras", "A pocos minutos de Unicentro Pasto", "Zona del Carnaval" |
 
-**lead_id through handoff:**
-- `AgentState` TypedDict includes `lead_id: str` (state.py line 72) ✅
-- Handoff node (`handoff.py`) does NOT include `lead_id` in its return dict — this is correct LangGraph behavior because LangGraph only updates the state keys explicitly returned; `lead_id` is preserved from the previous checkpoint state (the `add_messages` reducer merges, non-listed keys are carried forward)
-- `main.py` line 171: `"lead_id": req.lead_id` — set in initial_state for every invocation, so even if checkpoint state doesn't have it, it's reset from the request ✅
-
-**Handoff trigger flow:**
-```
-LangGraph → needs_handoff: True →
-main.py returns ProcessResponse(trigger_handoff=True) →
-webhook.route.ts step 10: leadService.updateHandoff(lead.id, reason) ✅
-```
-
-No thread_id loss detected. Lead_id is idempotently reset on every agent invocation.
+### Rationale
+Pasto is a strongly regional market. Generic "neutral Spanish" reads as impersonal. Local modisms build trust and project hyper-local expertise.
 
 ---
 
-## 8. ENV Discrepancy Audit
+## 5. New Lead Slots: `preferred_neighborhood` and `urgency_level`
 
-### Complete ENV map by service
+### Decision
+Add two fields to `LeadSlots` TypedDict and persist them to Neon via two new nullable Prisma columns.
 
-#### wppconnect-config
-| Variable | Where Used | Current Status |
-|----------|------------|----------------|
-| `WPPCONNECT_SECRET_KEY` | `config.ts` runtime, `config.json` secretKey field | ⚠️ config.json has placeholder "CHANGE_ME..." |
-| `WEBHOOK_URL` | `config.ts` webhook.url | ⚠️ config.json has hardcoded `https://wsa-backend-api.fly.dev/...` |
+| New Field | Type | Source | Purpose |
+|-----------|------|--------|---------|
+| `preferred_neighborhood` | `str` | Extracted in `slot_check` from city/zone context | Enables advisor routing by neighborhood specialty |
+| `urgency_level` | `str` | Normalized in `evaluate_lead` from raw `urgency` slot | Enables structured SQL queries for lead prioritization |
 
-**Fix**: `config.ts` correctly reads from env and builds the config object at runtime. The `config.json` is the fallback/static file; `start.sh` or the Dockerfile's entrypoint must use `config.ts` (not `config.json`) as the source of truth.
+### `urgency_level` Normalization Rules
+```python
+URGENCY_MAPPING = {
+    # Immediate
+    ("inmediato", "ya", "ahora", "urgente", "lo antes posible"): "inmediata",
+    # 1–3 months
+    ("próximo mes", "1 mes", "2 meses", "3 meses", "este mes"): "1-3_meses",
+    # 3–6 months
+    ("3 a 6 meses", "medio año", "4 meses", "5 meses", "6 meses"): "3-6_meses",
+    # 6+ months
+    ("fin de año", "el año que viene", "más de 6 meses", "largo plazo"): "mas_de_6_meses",
+    # Default
+    None: "no_definida",
+}
+```
 
-#### services/backend-api
-| Variable | Required | Notes |
-|----------|----------|-------|
-| `DATABASE_URL` | ✅ | Must include `?sslmode=require` for Neon |
-| `WPPCONNECT_URL` | ✅ | `https://wppconnect-sales-agent.fly.dev` |
-| `WPPCONNECT_SECRET_KEY` | ✅ | Same key as WPPConnect service |
-| `WPPCONNECT_SESSION` | Optional | Default: `my-whatsapp-session` |
-| `AGENT_URL` | ✅ | `https://wsa-agent-langgraph.fly.dev` |
-| `INTERNAL_API_KEY` | ✅ | Shared with frontend |
-| `LANGCHAIN_API_KEY` | Optional | LangSmith tracing |
+### Why Not Reuse `slotUrgency`
+The existing `slotUrgency` stores raw extracted text ("lo antes posible"). `urgencyLevel` stores the normalized enum, enabling `WHERE urgencyLevel = 'inmediata' ORDER BY interestLevel DESC` queries in the advisor panel.
 
-#### services/agent-langgraph
-| Variable | Required | Notes |
-|----------|----------|-------|
-| `DATABASE_URL` | ✅ | Must be direct connection (not pooled) for async psycopg |
-| `GROQ_API_KEY` | ✅ | LLM provider |
-| `LANGCHAIN_API_KEY` | Optional | |
-| `LANGCHAIN_TRACING_V2` | Optional | |
+---
 
-#### services/frontend
-| Variable | Required | Notes |
-|----------|----------|-------|
-| `BACKEND_API_URL` | ✅ | `https://wsa-backend-api.fly.dev` (server-side only) |
-| `INTERNAL_API_KEY` | ✅ | Shared with backend-api |
-| `WPPCONNECT_URL` | ✅ | Direct WPPConnect calls from Next.js route handler |
-| `WPPCONNECT_SECRET_KEY` | ✅ | Token generation |
-| `WPPCONNECT_SESSION` | Optional | |
-| `NEXT_PUBLIC_API_URL` | Optional | Client-side base URL (not currently used) |
+## 6. Prisma Non-Destructive Migration Pattern
 
-### Critical discrepancy
-`AGENT_URL` in `services/backend-api/src/config.ts` defaults to `http://localhost:8000` — on Fly.io this must be overridden to `https://wsa-agent-langgraph.fly.dev` or internal Fly DNS if services are in the same Fly organization.
+### Decision
+Add two nullable columns via `prisma migrate dev --name add_lead_neighborhood_urgency`. Both columns use `String?` (nullable), so Neon executes `ADD COLUMN` without table rewrites.
+
+### Neon-Safe Checklist
+- [x] All new columns nullable — no table rewrite
+- [x] No `DROP COLUMN` or `ALTER COLUMN TYPE`
+- [x] No unique constraints on existing data
+- [x] Migration runs in a single transaction (Prisma default)
+- [x] Backward compatible — existing code that doesn't set these columns continues working
+
+---
+
+## 7. LangGraph Node Modification Strategy
+
+### Decision
+Modify `generate_response.py` and `evaluate_lead.py` **in-place**. Do NOT add new nodes or change routing in `graph.py`.
+
+### Why No New Nodes
+Adding an `inventory_lookup` node would require new routing edges and could break `route_after_evaluate` logic. Since `InventoryService.query()` is synchronous and ≤50ms (in-process), calling it inside `generate_response.py` before building the system prompt is the minimal-change approach.
+
+### State Extension Pattern
+```python
+# state.py addition — backwards compatible (total=False means all fields optional)
+class LeadSlots(TypedDict, total=False):
+    # ... existing fields unchanged ...
+    preferred_neighborhood: Optional[str]  # NEW
+    urgency_level: Optional[str]           # NEW
+```
+
+No routing changes needed — `graph.py` is untouched.
+
+---
+
+## 8. Reliability Fallback Architecture
+
+### Three-Layer Fallback
+1. **`InventoryService._load()` failure** → `self._properties = []` → `query()` returns `[]` → no `{inventory_properties}` block injected → system prompt uses `real_estate_kb.py` general knowledge.
+2. **Empty query results** (no matching properties) → inject empty `{inventory_properties}` → system prompt instruction: "Usa tu conocimiento general del mercado para responder".
+3. **LLM timeout in `generate_response`** → existing fallback messages (already implemented) — no change needed.
+
+All three paths are covered by unit tests with mocked `InventoryService`.
+
+---
+
+## 9. ISO 25010 Quality Attribute Coverage
+
+| Quality Attribute | Mechanism |
+|-------------------|-----------|
+| **Functional Suitability** | `preferred_neighborhood` + `urgencyLevel` persisted in Neon; inventory query returns accurate (mock) data per barrio |
+| **Reliability** | Three-layer fallback (§8); no new external network dependency |
+| **Maintainability** | All new functions documented with commercial-logic docstrings explaining the sales rationale |
+| **Performance Efficiency** | In-process JSON query ≤50ms; no new external service calls in the hot path |
+| **Security** | Inventory JSON is read-only; `sanitize.py` already defends user input |
+| **Compatibility** | WPPConnect and dashboard untouched; Prisma migration is `ADD COLUMN` only |
+
+---
+
+## 10. Git Workflow
+
+### Decision
+All work on branch `feature/sales-closer-engine-v2`. Conventional commit format:
+
+| Change Type | Example Commit |
+|-------------|----------------|
+| New data file | `feat(data): add inventory_colombia.json with Pasto/Bogotá/Medellín/Cali properties` |
+| InventoryService | `feat(agent): implement InventoryService mock-RAG for property lookup` |
+| Prompt redesign | `feat(agent): redesign system prompt with sales closer persona and CTA logic` |
+| Slot extraction | `feat(agent): add preferred_neighborhood slot extraction in slot_check` |
+| Evaluate lead | `feat(agent): normalize urgency_level in evaluate_lead node` |
+| Generate response | `feat(agent): inject inventory context and CTA into generate_response` |
+| Prisma migration | `feat(backend): add slotNeighborhood and urgencyLevel columns to Lead` |
+| State update | `feat(agent): extend AgentState with preferred_neighborhood and urgency_level` |
+| Fallback logic | `feat(agent): implement inventory fallback to real_estate_kb on query failure` |
+| Documentation | `docs(spec): update spec.md and tasks.md for sales-closer-engine-v2` |

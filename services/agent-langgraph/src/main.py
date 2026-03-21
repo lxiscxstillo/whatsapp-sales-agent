@@ -8,6 +8,7 @@ thread_id = sender phone number (natural conversation isolation).
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -16,6 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from .config import settings
 from .graph import build_graph
+from .tools.inventory_service import InventoryService
 
 logger = logging.getLogger("agent")
 logging.basicConfig(level=logging.INFO)
@@ -121,8 +123,30 @@ async def _keepalive_loop(pool):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize AsyncPostgresSaver with a connection pool and compile the graph on startup."""
+    """
+    Initialize AsyncPostgresSaver, compile the LangGraph, and load the property inventory.
+
+    Sales Closer Engine v2:
+        InventoryService is loaded from data/inventory_colombia.json (relative to the
+        repository root — four levels up from this file). If the file is missing or
+        malformed, InventoryService gracefully initializes with an empty property list
+        and logs a WARNING. The agent remains fully functional, falling back to the
+        real_estate_kb.py market-level knowledge base.
+
+        The inventory is attached to app.state and passed to each graph invocation via
+        config["configurable"]["inventory"] so nodes remain stateless and testable.
+    """
     global _compiled_graph
+
+    # ── Load property inventory (Sales Closer Engine v2) ─────────────────────
+    # Path: /app/src/main.py → /app/src/ → /app/ (workdir) → data/
+    # In Docker, WORKDIR is /app and data/ is copied to /app/data/ via "COPY data ./data"
+    inventory_path = Path(__file__).parent.parent / "data" / "inventory_colombia.json"
+    app.state.inventory = InventoryService(inventory_path)
+    logger.info(
+        "inventory.startup_status",
+        extra={"total_properties": len(app.state.inventory._properties)},
+    )
 
     pool, _compiled_graph = await _init_graph_with_retry()
     keepalive_task = asyncio.create_task(_keepalive_loop(pool))
@@ -169,8 +193,16 @@ async def process_message(req: ProcessRequest):
         raise HTTPException(status_code=503, detail="Graph not initialized")
 
     thread_id = req.phone
+    # Pass InventoryService via configurable so generate_response node can query it
+    # without holding global state. This keeps nodes stateless and independently testable.
+    # app.state.inventory is set during lifespan startup; getattr with None fallback
+    # ensures backward compatibility if InventoryService failed to initialize.
+    inventory_service = getattr(app.state, "inventory", None)
     config = {
-        "configurable": {"thread_id": thread_id},
+        "configurable": {
+            "thread_id": thread_id,
+            "inventory": inventory_service,
+        },
     }
 
     # Initial state override for this invocation
@@ -209,9 +241,13 @@ async def process_message(req: ProcessRequest):
     except Exception:
         pass
 
+    # Build updated_slots dict — includes Sales Closer Engine v2 fields
+    # (preferred_neighborhood, urgency_level) so backend-api can persist them.
+    result_slots = dict(result.get("slots", req.slots) or req.slots)
+
     return ProcessResponse(
         response=response_text,
-        updated_slots=result.get("slots", req.slots),
+        updated_slots=result_slots,
         interest_level=result.get("interest_level", req.interest_level),
         trigger_handoff=result.get("needs_handoff", False),
         handoff_reason=result.get("handoff_reason"),
