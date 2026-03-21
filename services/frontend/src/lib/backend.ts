@@ -10,7 +10,7 @@ export async function backendFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const url = `${BACKEND_URL}${path}`;
+  const url = `${BACKEND_URL}/api/v1${path}`;
   return fetch(url, {
     ...options,
     cache: 'no-store',
