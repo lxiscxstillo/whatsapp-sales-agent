@@ -23,6 +23,10 @@ const WebhookPayloadSchema = z.object({
 });
 
 // ─── POST /api/v1/webhook/message ─────────────────────────────────────────────
+//
+// Connection guarantee: WPPConnect's onmessage event only fires when session
+// state is isLogged (CONNECTED). If this endpoint is reached, WPPConnect IS
+// connected by definition — no additional connection status check is needed.
 
 webhookRouter.post('/message', async (req: Request, res: Response, next: NextFunction) => {
   // Filter non-message events (onack, onpresencechanged, etc.)

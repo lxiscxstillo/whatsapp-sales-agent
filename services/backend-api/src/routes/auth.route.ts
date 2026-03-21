@@ -6,7 +6,39 @@ import * as wppconnect from '../services/wppconnect.service';
 
 export const authRouter = Router();
 
-// Token cache shared with wppconnect.service calls
+// ── ConnectionState enum ──────────────────────────────────────────────────────
+// Normalized 5-value state machine. Maps WPPConnect raw status strings to a
+// clean enum the frontend uses to drive its panel state machine.
+
+export type ConnectionState =
+  | 'CONNECTED'      // isLogged — session active
+  | 'QR_CODE_READY'  // QRCODE — QR generated, awaiting scan
+  | 'AUTHENTICATING' // qrReadSuccess | SYNCING — QR scanned, syncing
+  | 'DISCONNECTED'   // notLogged | browserClose | desconnectedMobile | serverClose | etc.
+  | 'ERROR';         // backend cannot reach WPPConnect
+
+function toConnectionState(rawStatus: string, hasQrcode: boolean): ConnectionState {
+  switch (rawStatus) {
+    case 'isLogged':
+      return 'CONNECTED';
+    case 'QRCODE':
+      return hasQrcode ? 'QR_CODE_READY' : 'DISCONNECTED';
+    case 'qrReadSuccess':
+    case 'SYNCING':
+      return 'AUTHENTICATING';
+    case 'notLogged':
+    case 'browserClose':
+    case 'desconnectedMobile':
+    case 'serverClose':
+    case 'qrReadFail':
+    case 'autocloseCalled':
+    default:
+      return 'DISCONNECTED';
+  }
+}
+
+// ── Token cache ───────────────────────────────────────────────────────────────
+
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
 async function getCachedToken(): Promise<string> {
@@ -19,9 +51,9 @@ async function getCachedToken(): Promise<string> {
 }
 
 // ── GET /api/v1/auth/qr ───────────────────────────────────────────────────────
-// Fetches WhatsApp session status + QR code from WPPConnect.
-// Retries up to 3 times on transient errors before returning ERROR status.
-// Returns HTTP 200 always — error state is encoded in the `status` field.
+// Returns normalized connectionState + raw WPPConnect status + QR code.
+// Retries up to 3 times on transient errors. Always returns HTTP 200 —
+// error state is encoded in connectionState: 'ERROR'.
 
 authRouter.get('/qr', async (_req: Request, res: Response) => {
   const session = config.WPPCONNECT_SESSION;
@@ -36,24 +68,19 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
 
       const { data } = await axios.get(
         `${config.WPPCONNECT_URL}/api/${session}/status-session`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 8000,
-        }
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
       );
 
       const status: string = data.status ?? 'unknown';
-      const connected = status === 'isLogged';
       const qrcode: string | null = data.qrcode ?? null;
+      const connected = status === 'isLogged';
+      const connectionState = toConnectionState(status, qrcode !== null);
 
-      return res.json({ status, connected, qrcode, session, checkedAt });
+      return res.json({ connectionState, status, connected, qrcode, session, checkedAt });
     } catch (err) {
       const axiosErr = err as AxiosError;
 
-      // If token likely expired, clear cache so next attempt re-generates
-      if (axiosErr.response?.status === 401) {
-        tokenCache = null;
-      }
+      if (axiosErr.response?.status === 401) tokenCache = null;
 
       const isLastAttempt = attempt === MAX_ATTEMPTS;
 
@@ -64,6 +91,7 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
           error: axiosErr.message,
         });
         return res.json({
+          connectionState: 'ERROR' as ConnectionState,
           status: 'ERROR',
           connected: false,
           qrcode: null,
@@ -73,13 +101,61 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
         });
       }
 
-      logger.warn({
-        event: 'qr_fetch_retry',
-        attempt,
-        error: axiosErr.message,
-      });
-
+      logger.warn({ event: 'qr_fetch_retry', attempt, error: axiosErr.message });
       await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
     }
+  }
+});
+
+// ── POST /api/v1/auth/start-session ──────────────────────────────────────────
+// Closes the existing WPPConnect session and starts a fresh one (new QR cycle).
+// The frontend calls this through the Vercel proxy — never directly — to avoid
+// Vercel's 10s serverless timeout on cold WPPConnect starts.
+
+authRouter.post('/start-session', async (_req: Request, res: Response) => {
+  const session = config.WPPCONNECT_SESSION;
+
+  try {
+    const token = await getCachedToken();
+
+    // 1. Close existing session (ignore errors — it may already be closed)
+    try {
+      await axios.post(
+        `${config.WPPCONNECT_URL}/api/${session}/close-session`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
+      );
+    } catch {
+      // Intentionally ignored — session may not exist yet
+    }
+
+    // 2. Brief pause before starting fresh
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // 3. Start new session (generates a fresh QR)
+    await axios.post(
+      `${config.WPPCONNECT_URL}/api/${session}/${config.WPPCONNECT_SECRET_KEY}/start-session`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+    );
+
+    // Invalidate token cache — new session generates a new token
+    tokenCache = null;
+
+    logger.info({ event: 'session_started', session });
+
+    return res.json({ ok: true, connectionState: 'DISCONNECTED' as ConnectionState });
+  } catch (err) {
+    const axiosErr = err as AxiosError;
+    logger.error({
+      event: 'session_start_failed',
+      session,
+      error: axiosErr.message,
+    });
+    return res.json({
+      ok: false,
+      connectionState: 'ERROR' as ConnectionState,
+      error: axiosErr.message,
+    });
   }
 });
