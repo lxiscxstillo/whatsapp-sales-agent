@@ -32,9 +32,13 @@ const WebhookPayloadSchema = z.object({
 webhookRouter.post('/message', async (req: Request, res: Response, next: NextFunction) => {
   const event: string | undefined = req.body?.event;
 
-  // Log every non-message event at debug level so we can see what WPPConnect sends
+  // Log every non-message event (with limited payload) so we can debug WPPConnect state
   if (event && event !== 'onmessage') {
-    logger.info({ event: 'wpp_webhook_received', wppEvent: event, keys: Object.keys(req.body) });
+    const logPayload: Record<string, unknown> = { wppEvent: event, session: req.body?.session };
+    if (event === 'status-find') logPayload.status = req.body?.status;
+    if (event === 'closesession') { logPayload.message = req.body?.message; logPayload.connected = req.body?.connected; }
+    if (event === 'qrcode') logPayload.qrcodePrefix = String(req.body?.qrcode ?? '').slice(0, 30);
+    logger.info({ event: 'wpp_webhook_received', ...logPayload });
   }
 
   // ── QR code event ────────────────────────────────────────────────────────────
@@ -51,12 +55,18 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
     return res.status(200).json({ captured: 'qrcode' });
   }
 
-  // ── Session connected — clear stale QR ──────────────────────────────────────
-  // WPPConnect fires event="status-find" with status field when session changes.
+  // ── Session state changes — update QR store ──────────────────────────────────
+  // WPPConnect fires event="status-find" with status field on every state change.
   if (event === 'status-find' || event === 'onStateChange' || event === 'statusFind') {
     const status: string | undefined = req.body?.status ?? req.body?.data;
     if (status === 'isLogged' || status === 'CONNECTED') clearQrCode();
     return res.status(200).json({ captured: event, status });
+  }
+
+  // ── Session closed — clear stale QR ──────────────────────────────────────────
+  if (event === 'closesession') {
+    clearQrCode();
+    return res.status(200).json({ captured: 'closesession' });
   }
 
   // Filter other non-message events (onack, onpresencechanged, etc.)
