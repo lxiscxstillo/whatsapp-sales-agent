@@ -46,7 +46,7 @@
 ## Phase 5 — Deploy
 
 - [X] T008 [US1] Deploy backend-api: `fly deploy --app wsa-backend-api` from `services/backend-api/`
-- [ ] T009 [US3] Commit all frontend changes and push branch — Vercel will create a preview deployment for `feature/real-time-whatsapp-auth`; merge to `main` when validated to trigger production deploy
+- [X] T009 [US3] Commit all frontend changes and push branch — Vercel will create a preview deployment for `feature/real-time-whatsapp-auth`; merge to `main` when validated to trigger production deploy
 
 ---
 
