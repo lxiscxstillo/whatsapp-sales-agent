@@ -155,6 +155,15 @@ async def process_message(req: ProcessRequest):
     """
     Process an incoming WhatsApp message through the LangGraph agent.
     Returns the agent's response plus updated lead state.
+
+    ISO 25010 — Functional Correctness:
+    - thread_id = req.phone: LangGraph checkpoint key for conversation isolation.
+      Each unique phone number gets its own independent conversation thread stored
+      in PostgreSQL via AsyncPostgresSaver. Consistent across all invocations.
+    - lead_id = req.lead_id: PostgreSQL row identifier injected into initial_state
+      on every call. The backend (webhook.route.ts) uses its own lead.id for DB
+      updates — it does not read lead_id from this response. The agent carries it
+      in state for potential future use by nodes that need the DB reference.
     """
     if _compiled_graph is None:
         raise HTTPException(status_code=503, detail="Graph not initialized")

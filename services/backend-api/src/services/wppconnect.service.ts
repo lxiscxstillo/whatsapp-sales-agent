@@ -28,8 +28,14 @@ export async function sendMessage(phone: string, text: string): Promise<void> {
       { headers: { Authorization: `Bearer ${token}` } }
     );
   } catch (err) {
-    // Single retry
     const axiosErr = err as AxiosError;
+    // 404 = WPPConnect cannot resolve @lid (WhatsApp privacy-mode) contacts via REST API.
+    // Retrying is pointless — log warning and return gracefully so DB writes still complete.
+    if (axiosErr.response?.status === 404) {
+      logger.warn('WPPConnect @lid send skipped: 404 (privacy-mode contact not resolvable)', { phone });
+      return;
+    }
+    // Single retry for transient errors (5xx, network timeouts)
     logger.warn('WPPConnect send failed, retrying once', { error: axiosErr.message, phone });
     const retryToken = await generateToken();
     await wppClient.post(

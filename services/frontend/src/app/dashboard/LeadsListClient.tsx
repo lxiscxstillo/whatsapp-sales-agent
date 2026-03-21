@@ -67,7 +67,7 @@ export default function LeadsListClient({ initialStatus, initialPage = 1 }: Prop
   const { data, isLoading } = useSWR<PaginatedResponse<Lead>>(
     `/api/leads?${params.toString()}`,
     fetcher,
-    { refreshInterval: 4000 }
+    { refreshInterval: 2500 }
   );
 
   if (isLoading) {

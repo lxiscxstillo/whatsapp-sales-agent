@@ -22,4 +22,13 @@ if (!parsed.success) {
 }
 
 export const config = parsed.data;
+
+// Warn if DATABASE_URL is missing SSL requirement (non-fatal — allows local dev without SSL)
+if (config.DATABASE_URL && !config.DATABASE_URL.includes('sslmode=require')) {
+  console.warn(
+    '⚠️  DATABASE_URL does not include ?sslmode=require. ' +
+    'Neon connections will fail in production. ' +
+    'Use the pooler endpoint with ?sslmode=require&pgbouncer=true&connection_limit=5'
+  );
+}
 export type Config = typeof config;

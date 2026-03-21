@@ -171,6 +171,11 @@ webhookRouter.post('/message', async (req: Request, res: Response, next: NextFun
     }
 
     // 10. Handle handoff
+    // ISO 25010 — Functional Correctness (handoff flow):
+    // LangGraph returns trigger_handoff=true when the agent decides to escalate.
+    // The backend uses lead.id (retrieved from DB in step 2) — NOT lead_id from
+    // the agent state — to update the DB. Future messages from this phone are
+    // silently dropped at step 5 (['HANDOFF', 'PAUSED', 'CLOSED'] guard).
     if (agentResult.triggerHandoff) {
       await leadService.updateHandoff(lead.id, agentResult.handoffReason || 'qualified_lead');
       events.leadHandoff({

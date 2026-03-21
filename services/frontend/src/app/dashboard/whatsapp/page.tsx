@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import useSWR from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,6 +11,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { MaintenancePanel } from '@/components/MaintenancePanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -250,18 +251,126 @@ function QrPanel({ data, countdown }: { data: WhatsAppStatus; countdown: number 
 
 // ─── Main Client Component ────────────────────────────────────────────────────
 
+function RestartingPanel({ onRestart, isRestarting }: { onRestart: () => void; isRestarting: boolean }) {
+  return (
+    <motion.div
+      variants={cardVariants}
+      initial="hidden"
+      animate="show"
+      className="bg-white rounded-2xl border border-amber-200/80 p-8 shadow-sm"
+    >
+      <div className="flex flex-col items-center gap-4 py-8 text-center">
+        <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center">
+          <RefreshCw className={`w-7 h-7 text-amber-500 ${isRestarting ? 'animate-spin' : ''}`} />
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-slate-700">Generando QR…</h3>
+          <p className="text-sm text-slate-400 mt-1">
+            La sesión se está reiniciando. El código QR aparecerá en unos segundos.
+          </p>
+        </div>
+        {!isRestarting && (
+          <button
+            onClick={onRestart}
+            className="mt-2 flex items-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-xl transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Reiniciar sesión
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Circuit Breaker constants ────────────────────────────────────────────────
+const FAILURE_THRESHOLD = 3;
+const RECOVERY_DELAY_MS = 30_000;
+
 function WhatsAppClient() {
-  const { data, error, isLoading } = useSWR<WhatsAppStatus>(
+  const [isRestarting, setIsRestarting] = useState(false);
+
+  // Circuit breaker state
+  const failureCount = useRef(0);
+  const openedAt = useRef(0);
+  const [circuitState, setCircuitState] = useState<'CLOSED' | 'OPEN' | 'HALF_OPEN'>('CLOSED');
+  const [retryIn, setRetryIn] = useState(0);
+
+  // Countdown to HALF_OPEN when circuit is OPEN
+  useEffect(() => {
+    if (circuitState !== 'OPEN') return;
+    setRetryIn(Math.ceil(RECOVERY_DELAY_MS / 1000));
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - openedAt.current;
+      const remaining = Math.max(0, Math.ceil((RECOVERY_DELAY_MS - elapsed) / 1000));
+      setRetryIn(remaining);
+      if (elapsed >= RECOVERY_DELAY_MS) {
+        setCircuitState('HALF_OPEN');
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [circuitState]);
+
+  const { data, error, isLoading, mutate } = useSWR<WhatsAppStatus>(
     '/api/whatsapp',
     fetcher,
     {
-      refreshInterval: (d) => (!d || !d.connected ? QR_REFRESH_INTERVAL * 1000 : 10_000),
-      revalidateOnFocus: true,
-      dedupingInterval: 5_000,
+      refreshInterval: (d) => {
+        if (circuitState === 'OPEN') return 0; // pause polling when open
+        if (!d || d.connected) return 10_000;
+        if (!d.qrcode) return 5_000;
+        return QR_REFRESH_INTERVAL * 1000;
+      },
+      revalidateOnFocus: circuitState === 'CLOSED',
+      dedupingInterval: 4_000,
+      onSuccess: () => {
+        failureCount.current = 0;
+        if (circuitState !== 'CLOSED') setCircuitState('CLOSED');
+      },
+      onError: () => {
+        failureCount.current += 1;
+        if (failureCount.current >= FAILURE_THRESHOLD && circuitState === 'CLOSED') {
+          openedAt.current = Date.now();
+          setCircuitState('OPEN');
+        } else if (circuitState === 'HALF_OPEN') {
+          // Test request failed — reopen
+          openedAt.current = Date.now();
+          setCircuitState('OPEN');
+        }
+      },
     }
   );
 
   const countdown = useCountdown(data?.checkedAt);
+
+  const handleManualRetry = () => {
+    failureCount.current = 0;
+    setCircuitState('HALF_OPEN');
+    mutate();
+  };
+
+  const handleRestart = async () => {
+    setIsRestarting(true);
+    try {
+      await fetch('/api/whatsapp', { method: 'POST' });
+      setTimeout(() => mutate(), 3_000);
+      setTimeout(() => mutate(), 6_000);
+      setTimeout(() => mutate(), 10_000);
+    } finally {
+      setTimeout(() => setIsRestarting(false), 12_000);
+    }
+  };
+
+  // Circuit OPEN or HALF_OPEN — show maintenance panel
+  if (circuitState === 'OPEN' || circuitState === 'HALF_OPEN') {
+    return (
+      <MaintenancePanel
+        state={circuitState}
+        retryIn={retryIn}
+        onManualRetry={handleManualRetry}
+      />
+    );
+  }
 
   if (isLoading || (!data && !error)) {
     return <SkeletonPanel />;
@@ -279,27 +388,8 @@ function WhatsAppClient() {
     return <QrPanel data={data!} countdown={countdown} />;
   }
 
-  // Session exists but no QR yet (starting up)
-  return (
-    <motion.div
-      variants={cardVariants}
-      initial="hidden"
-      animate="show"
-      className="bg-white rounded-2xl border border-slate-200/80 p-8 shadow-sm"
-    >
-      <div className="flex flex-col items-center gap-4 py-8 text-center">
-        <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center">
-          <RefreshCw className="w-7 h-7 text-slate-400 animate-spin" />
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold text-slate-700">Iniciando sesión…</h3>
-          <p className="text-sm text-slate-400 mt-1">
-            Estado: <span className="font-mono">{data!.status}</span>
-          </p>
-        </div>
-      </div>
-    </motion.div>
-  );
+  // CLOSED / transitional state — no QR yet
+  return <RestartingPanel onRestart={handleRestart} isRestarting={isRestarting} />;
 }
 
 // ─── Page Export ──────────────────────────────────────────────────────────────

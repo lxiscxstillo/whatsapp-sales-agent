@@ -41,7 +41,18 @@ DEFAULT_HANDOFF_MESSAGE = (
 
 
 def handoff(state: AgentState) -> dict:
-    """Set handoff state and generate warm closing message."""
+    """Set handoff state and generate warm closing message.
+
+    ISO 25010 — Functional Correctness (thread_id / lead_id integrity):
+    `lead_id` is intentionally NOT included in this return dict.
+    LangGraph preserves all AgentState keys not explicitly overridden by a node's
+    return value — so lead_id flows through unchanged from the checkpoint state.
+    Additionally, main.py re-injects `lead_id` from req.lead_id on every invocation,
+    so even a cold checkpoint will have the correct lead_id for the current request.
+    The backend (webhook.route.ts step 10) uses agentResult.trigger_handoff to call
+    leadService.updateHandoff(lead.id, reason) — it does NOT read lead_id from the
+    agent response; it uses the lead.id already retrieved from the DB in step 2.
+    """
     handoff_reason = state.get("handoff_reason") or "qualified_lead"
 
     closing_message = HANDOFF_MESSAGES.get(handoff_reason, DEFAULT_HANDOFF_MESSAGE)
