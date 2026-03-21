@@ -72,7 +72,20 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
         { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
       );
 
-      const rawStatus: string = data.status ?? 'unknown';
+      let rawStatus: string = data.status ?? 'unknown';
+      // WPPConnect v2.8.x status-session returns INITIALIZING even when actually
+      // connected. Use check-connection-session as fallback to detect real state.
+      if (rawStatus === 'INITIALIZING') {
+        try {
+          const connCheck = await axios.get(
+            `${config.WPPCONNECT_URL}/api/${session}/check-connection-session`,
+            { headers: { Authorization: `Bearer ${token}` }, timeout: 5000 }
+          );
+          if (connCheck.data?.status === true) {
+            rawStatus = 'isLogged';
+          }
+        } catch { /* ignore — use original rawStatus */ }
+      }
       // WPPConnect v2.8.x stays at INITIALIZING while QR is pending — fall back
       // to the stored QR from the onQRCode webhook event if available.
       const apiQrcode: string | null = data.qrcode ?? null;
@@ -115,11 +128,8 @@ authRouter.get('/qr', async (_req: Request, res: Response) => {
 });
 
 // ── POST /api/v1/auth/start-session ──────────────────────────────────────────
-// Logs out and starts a completely fresh WPPConnect session (new QR cycle).
-// Using logout-session (not close-session) deletes the saved token files so
-// WPPConnect always starts from scratch — this is required for the onQRCode
-// webhook to fire reliably. With saved (expired) tokens, WPPConnect takes a
-// different code path that does not emit the qrcode webhook event.
+// Closes any running session then starts a fresh WPPConnect session (new QR cycle).
+// close-session stops the browser cleanly; logout-session crashes in v2.8.7.
 // The frontend calls this through the Vercel proxy to avoid Vercel's 10s limit.
 
 authRouter.post('/start-session', async (_req: Request, res: Response) => {
@@ -131,12 +141,14 @@ authRouter.post('/start-session', async (_req: Request, res: Response) => {
     // Clear any stale QR from a previous session cycle
     clearQrCode();
 
-    // 1. Logout existing session — removes saved token files from disk so the
-    //    next start-session goes through the fresh QR path (fires onQRCode webhook).
-    //    Ignore errors — session may not exist yet or may already be logged out.
+    // 1. Close existing session — stops the browser cleanly so the next
+    //    start-session goes through the fresh QR path (fires qrcode webhook).
+    //    logout-session crashes in WPPConnect v2.8.7 (req.client.logout is not a function);
+    //    close-session is the correct endpoint for stopping the active session.
+    //    Ignore errors — session may not exist yet or may already be closed.
     try {
       await axios.post(
-        `${config.WPPCONNECT_URL}/api/${session}/logout-session`,
+        `${config.WPPCONNECT_URL}/api/${session}/close-session`,
         {},
         { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 }
       );
