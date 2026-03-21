@@ -2,6 +2,7 @@ app = 'wppconnect-sales-agent'
 primary_region = 'gru'
 
 [build]
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "21465"

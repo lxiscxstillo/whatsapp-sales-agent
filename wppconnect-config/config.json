@@ -1,6 +1,6 @@
 {
   "secretKey": "CHANGE_ME_USE_WPPCONNECT_SECRET_KEY_ENV_VAR",
-  "host": "http://localhost",
+  "host": "http://0.0.0.0",
   "port": 21465,
   "deviceName": "Asesor Inmobiliario",
   "poweredBy": "WPPConnect-Server",
