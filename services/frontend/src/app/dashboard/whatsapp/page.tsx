@@ -53,8 +53,9 @@ const cardVariants = {
 // DISCONNECTED / ERROR: 5s — quick recovery detection
 // CONNECTED: 10s — session rarely changes, keep load low
 
-function getRefreshInterval(data: WhatsAppStatus | undefined, circuitOpen: boolean): number {
+function getRefreshInterval(data: WhatsAppStatus | undefined, circuitOpen: boolean, starting: boolean): number {
   if (circuitOpen) return 0;
+  if (starting) return 2000; // Poll fast while WPPConnect is booting
   if (!data) return 5000;
   switch (data.connectionState) {
     case 'CONNECTED':      return 10000;
@@ -364,7 +365,7 @@ function WhatsAppClient() {
     '/api/whatsapp',
     fetcher,
     {
-      refreshInterval: (d) => getRefreshInterval(d, circuitState === 'OPEN'),
+      refreshInterval: (d) => getRefreshInterval(d, circuitState === 'OPEN', isStarting),
       revalidateOnFocus: circuitState === 'CLOSED',
       dedupingInterval: 2000,
       onSuccess: () => {
@@ -411,17 +412,26 @@ function WhatsAppClient() {
     mutate();
   };
 
+  // Clear isStarting when WPPConnect leaves DISCONNECTED (QR ready or connected)
+  useEffect(() => {
+    if (isStarting && data?.connectionState && data.connectionState !== 'DISCONNECTED') {
+      setIsStarting(false);
+    }
+  }, [data?.connectionState, isStarting]);
+
   const handleStart = async () => {
     setIsStarting(true);
     try {
       await fetch('/api/whatsapp', { method: 'POST' });
-      // Poll aggressively after restart to catch QR_CODE_READY quickly
-      setTimeout(() => mutate(), 3000);
-      setTimeout(() => mutate(), 6000);
-      setTimeout(() => mutate(), 10000);
-    } finally {
-      setTimeout(() => setIsStarting(false), 12000);
+      // WPPConnect Chromium boot takes 30-90s — poll every 3s for up to 90s
+      for (let i = 1; i <= 30; i++) {
+        setTimeout(() => mutate(), i * 3000);
+      }
+    } catch {
+      setIsStarting(false);
     }
+    // Safety fallback: clear after 100s no matter what
+    setTimeout(() => setIsStarting(false), 100_000);
   };
 
   // Circuit OPEN / HALF_OPEN — show maintenance panel
