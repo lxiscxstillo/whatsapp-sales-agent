@@ -15,6 +15,7 @@ Commercial rationale:
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 
 from ..state import AgentState
 from ...config import settings
@@ -143,7 +144,7 @@ def _compute_cta_instruction(
     )
 
 
-def generate_response(state: AgentState, config: dict | None = None) -> dict:
+def generate_response(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """
     Generate a natural, persuasive reply — Sales Closer Engine v2.
 
